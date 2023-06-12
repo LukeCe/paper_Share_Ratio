@@ -154,6 +154,54 @@ cbind(
   sum(VOTE_IMP) - sum(VOTE))
 ```
 
+#### Before and after
+
+Lets check the impact of the imputation on the distribution of the data.
+We see that our imputation leads an increase in the variance, but does not affected the average in a noticable way.
+This is expected because our imputation method replaces zeros (red bars in the graphic) with points close to the edge of the triangle, which are extreme values in the simplex sense.
+
+```{r}
+simplex_isodensity <- function(
+  data,
+  quantiles = c(0.5,1:9,9.5)/10,
+  labels = names(cen),
+  col1 = "black",
+  col2 = "grey45",
+  plot_data = TRUE) {
+  
+  # code adapted from:
+  # Van den Boogaart and Tolosana-Delgado (2013), page 52
+  
+  stopifnot(ncol(data) == 3)
+  cen <- mean(data)
+  var <- var(data)
+  if (plot_data) 
+    plot(data, pch = ".", col = "grey85", labels = labels, mp = NULL, lenMissingTck = 0.02)
+  plot(cen,pch=4, col = col1, labels = labels, add = plot_data)
+  for (p in quantiles) {
+    r = sqrt(qchisq(p=p,df=2))
+    ellipses(cen,var,r, col=col2)
+  }
+}
+
+opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
+simplex_isodensity(acomp(VOTE_IMP[,1:3]), labels = c("Macron", "Le Pen", "Mélenchon"))
+title(sub = "Imputed", outer = FALSE)
+simplex_isodensity(acomp(VOTE[,1:3]), labels = c("Macron", "Le Pen", "Mélenchon"))
+title(sub = "Original")
+par(opar)
+```
+
+```{r}
+opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
+simplex_isodensity(acomp(VOTE_IMP[,-(1:3)]), labels = c("Left", "Right", "No vote"))
+title(sub = "Imputed", outer = FALSE)
+simplex_isodensity(acomp(VOTE[,-(1:3)]), labels = c("Left", "Right", "No vote"))
+title(sub = "Original")
+par(opar)
+```
+
+
 
 ### In the professional categories (pc) data
 
@@ -195,11 +243,34 @@ cbind(
   sum(PROFCAT_IMP) - sum(PROFCAT))
 ```
 
+####Before and after imputation
+
+We have the same results as before, but the increase in variance appears more pronounced.
+
+```{r}
+opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
+simplex_isodensity(acomp(PROFCAT_IMP[,(1:3)]))
+title(sub = "Imputed", outer = FALSE)
+simplex_isodensity(acomp(PROFCAT[,(1:3)]))
+title(sub = "Original")
+par(opar)
+```
+
+```{r}
+opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
+simplex_isodensity(acomp(PROFCAT_IMP[,(2:4)]))
+title(sub = "Imputed", outer = FALSE)
+simplex_isodensity(acomp(PROFCAT[,(2:4)]))
+title(sub = "Original")
+par(opar)
+```
+
+
 # Exploratory analysis
 
 
 We defined the data set for our analysis.
-Which is based on the imputed vote and imputed profession categories (PC) data.
+Which is based on the imputed vote and professional categories (PC) data.
 
 
 ```{r}
