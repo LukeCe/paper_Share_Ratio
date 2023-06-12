@@ -1,0 +1,354 @@
+---
+title: "Modeling the French presidential elections of 2022 with CoDa tools"
+author:
+  - Lukas Dargel
+  - Christine Thomas-Agnan
+format:
+  html:
+    theme: minty
+    toc: true
+    number-sections: true
+    code-fold: true
+    code-tools: true
+---
+
+```{r setup}
+library("compositions")
+library("data.table")
+library("here")
+library("ggplot2")
+library("kableExtra")
+library("skimr")
+library("zCompositions")
+
+
+options(knitr.kable.NA = '',
+        scipen = 9)
+
+mun_elec2census <- readRDS(here("out/data/mun_elec2census.Rds")) # election data combined with the census
+mun_elec <- readRDS(here("in/data/mun_elec.Rds")) # original election data 
+```
+
+
+The vignette illustrates results of the article from Dargel and Thomas-Agnan (2023).
+
+
+# Introduction
+
+We model the french elections using CoDa tools.
+This is more a demonstration of the capacity of these tools.
+
+
+
+# Descriptive statistics
+
+The study combine the official election results with census data.
+  -
+  -
+  
+
+## Data overview 
+
+Lets have a first look at the combined dataset.
+
+```{r}
+skim(mun_elec2census)
+```
+
+
+## Compare losses due to preprocessing 
+
+
+Lets compare the original voting data with the combined voting data to assess the losses and potential biases.
+
+```{r}
+# original election columns
+elec_cols <- setdiff(names(mun_elec), c("ID_MUN", "NAME_MUN", "NAME_DEP"))
+pct <- function(x) scales::percent(x,accuracy = .1)
+summarize_elec <- function(dt) {
+  
+  dt <- data.table(
+    MUN_COUNT = nrow(dt),
+    DEP_COUNT = length(unique(dt$NAME_DEP)),
+    dt[,lapply(.SD, sum), .SDcols = elec_cols]
+  )
+  
+  
+  dt[,EXPRESSED := NA]
+  dt[,INSCRIBED := sum(.SD), .SDcols = elec_cols]
+  dt[,EXPRESSED := INSCRIBED - ABSTENTIONS - BLANK - INVALID]
+  
+  show_dt <- data.table(t(dt),keep.rownames = TRUE)
+  
+  dont_use <- c("MUN_COUNT","DEP_COUNT")
+  show_dt[!rn %in% dont_use,
+          "% of INSCRIBED" := pct(V1/dt[["INSCRIBED"]])]
+  
+  dont_use <- c(dont_use, "ABSTENTIONS", "BLANK", "INVALID", "INSCRIBED")
+  show_dt[!rn %in% dont_use,
+          "% of EXPRESSED" := pct(V1/dt[["EXPRESSED"]])]
+  names(show_dt)[1:2] <- c("INDICATOR", "COUNT")
+  show_dt
+}  
+
+
+elec_original <- summarize_elec(mun_elec)
+elec_combined <- summarize_elec(mun_elec2census)
+elec_combined <- cbind(LOSS = elec_original[["COUNT"]] - elec_combined[["COUNT"]], elec_combined[,-1])
+elec_combined <- cbind("% LOSS" = pct(elec_combined[["LOSS"]]/elec_combined[["COUNT"]]), elec_combined)
+kable(cbind(elec_original, elec_combined)) |> 
+  kable_classic(full_width = F) |> 
+  add_header_above(c(" " = 1, "Full election data" = 3, "Combined election data" = 5)) |> 
+  pack_rows(group_label = "Units", 1,2,hline_after = TRUE) |> 
+  pack_rows(group_label = "Not expressed", 3,5,hline_after = TRUE) |> 
+  pack_rows(group_label = "Expressed", 6,17,hline_after = TRUE) |> 
+  pack_rows(group_label = "Totals", 18,19,hline_after = TRUE) |> 
+  column_spec(1, bold = T) 
+```
+
+
+## Check for problems with zeros
+
+
+### In the vote data
+
+We first check for zeros in the dependent variables.
+
+```{r}
+zero_summary <- function(dt) dt[,lapply(.SD, function(x) pct(sum(x==0)/.N))]
+zero_summary(mun_elec2census[,..elec_cols])
+```
+
+One way to solve the problem is amalgamations.
+We see that almost $98.5\%$ of observations are complete now.
+
+```{r}
+left_bloc <- c("ARTHAUD_Nathalie", "ROUSSEL_Fabien", "HIDALGO_Anne", "JADOT_Yannick")
+right_bloc <- c("ZEMMOUR_Eric", "PECRESSE_Valerie", "LASSALLE_Jean", "DUPONT_AIGNAN_Nicolas", "POUTOU_Philippe")
+
+VOTE <- cbind(
+  mun_elec2census[,c("MACRON_Emmanuel", "LE_PEN_Marine", "MELENCHON_Jean_Luc")],
+  LEFT = rowSums(mun_elec2census[,..left_bloc]),
+  RIGHT = rowSums(mun_elec2census[,..right_bloc]),
+  NON_VOTE = rowSums(mun_elec2census[,c("ABSTENTIONS", "INVALID","BLANK"),]))
+
+zPatterns(
+  VOTE,
+  label="0",
+  bar.labels = c(T,T),
+  axis.labels = c(NA,NA))
+```
+
+`r zv <- sum(0 != rowSums(VOTE == 0))`
+The remaining zeros are imputed.
+Here take the simple road of adding 1 for to all lines with at least one zero.
+Here we impute data in `r zv` cases with `r zv*ncol(VOTE)` additional "inscriptions".
+
+
+```{r}
+is_zero_row <- 0 != rowSums(VOTE == 0) 
+VOTE_IMP <- VOTE + is_zero_row
+cbind(
+  sum(is_zero_row),
+  sum(is_zero_row) * ncol(VOTE),
+  sum(VOTE_IMP) - sum(VOTE))
+```
+
+
+### In the professional categories (pc) data
+
+
+
+```{r}
+pc_cols <- names(mun_elec2census)
+pc_cols <- pc_cols[grep("^C19_", pc_cols)]
+zero_summary(mun_elec2census[,..pc_cols])
+```
+
+About $95%$ of case are complete.
+
+```{r}
+PROFCAT <- cbind(
+  "PC1" = mun_elec2census[,C19_POP15P_CS3 + C19_POP15P_CS4],
+  "PC2" = mun_elec2census[,C19_POP15P_CS5 + C19_POP15P_CS6],
+  "PC3" = mun_elec2census[,C19_POP15P_CS7],
+  "PC4" = mun_elec2census[,C19_POP15P_CS1 + C19_POP15P_CS2 + C19_POP15P_CS8]
+)
+
+zPatterns(
+  PROFCAT,
+  label="0",
+  bar.labels = c(T,T),
+  axis.labels = c(NA,NA))
+```
+
+`r zv <- sum(0 != rowSums(PROFCAT == 0))`
+We impute the data using the same strateas before.
+Here we impute data in `r zv` cases with `r zv*ncol(PROFCAT)` additional "inscriptions".
+
+```{r}
+is_zero_row <- 0 != rowSums(PROFCAT == 0) 
+PROFCAT_IMP <- PROFCAT + is_zero_row
+cbind(
+  sum(is_zero_row),
+  sum(is_zero_row) * ncol(PROFCAT),
+  sum(PROFCAT_IMP) - sum(PROFCAT))
+```
+
+# Exploratory analysis
+
+
+We defined the data set for our analysis.
+Which is based on the imputed vote and imputed profession categories (PC) data.
+
+
+```{r}
+mun2explore <- data.table(
+  ID_MUN = mun_elec2census$ID_MUN,
+  INSCRIBED = rowSums(VOTE_IMP))
+mun2explore <- cbind(mun2explore, VOTE_IMP, PROFCAT_IMP)
+```
+
+
+## Concentration
+
+
+
+## Heteroskedasticity
+
+
+Since election data corresponds to aggregations of individual choices we should suspect heteroskedasticity.
+The scatter plot below shows that that the share of "non votes" is directly impacted by the total number of voters.
+Additionally, its volatility seems to decrease with the size of the municipality in terms number if voters.
+
+```{r}
+ggplot(mun2explore[INSCRIBED < 300000,], aes(x = sqrt(INSCRIBED), y = NON_VOTE/INSCRIBED)) +
+  # geom_boxplot(aes(x = INSCRIBED_BINS, y = ABSTENTIONS/INSCRIBED)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  theme()
+```
+
+A similar pattern is observed for all vote variables.
+
+```{r}
+seq125 <- c(0, unlist(lapply(10^seq(10), "*", c(1,2,5))))
+seqSqr <- seq(0,15)^2 * 1000 
+mun2explore[,INSCRIBED_BINS := cut(INSCRIBED,c(seqSqr,Inf))]
+mun2explore_long <- 
+  melt(mun2explore,
+       id.vars = c("ID_MUN","INSCRIBED_BINS"),
+       measure.vars = colnames(VOTE))
+
+mun2explore_long[,value_rel := value/sum(value), by = "ID_MUN"]
+ggplot(mun2explore_long, aes(x = INSCRIBED_BINS, y = value_rel)) +
+  geom_boxplot(outlier.size = .1) +
+  facet_wrap("variable", ncol = 3) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90))
+
+```
+
+
+And for the PC variables as well.
+
+```{r}
+mun2explore_long2 <- 
+  melt(mun2explore,
+       id.vars = c("ID_MUN","INSCRIBED_BINS"),
+       measure.vars = colnames(PROFCAT))
+
+mun2explore_long2[,value_rel := value/sum(value), by = "ID_MUN"]
+ggplot(mun2explore_long2, aes(x = INSCRIBED_BINS, y = value_rel)) +
+  geom_boxplot(outlier.size = .1) +
+  facet_wrap("variable", ncol = 2) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+
+##  Correlations
+
+
+# Model for the share of "non votes"
+
+```{r}
+mun2model <- data.frame(
+  ID_MUN = mun_elec2census$ID_MUN,
+  INSCRIBED = rowSums(as.matrix(VOTE_IMP)),
+  INSCRIBED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
+mun2model[["VOTE"]] <- acomp(VOTE_IMP)
+mun2model[["PROFCAT"]] <- acomp(PROFCAT_IMP)
+
+logit <- function(p) log(p/(p+1))
+NV_model <- lm(
+  logit(VOTE[,6]) ~  ilr(PROFCAT) + log(INSCRIBED),
+  data = mun2model,
+  weights = INSCRIBED)
+summary(NV_model)
+```
+
+
+## Coefficients
+
+```{r}
+
+```
+
+## Semi-elasticites
+
+## Vriation scenarios
+
+
+
+## Profiles
+
+
+
+
+
+# Model of the full compostion of votes
+
+```{r}
+VOTE_model <- lm(
+  ilr(VOTE) ~  ilr(PROFCAT) + log(INSCRIBED),
+  data = mun2model,
+  weights = INSCRIBED)
+summary(VOTE_model)
+```
+
+
+## Coefficients 
+
+
+
+## Elasticities
+
+```{r}
+
+```
+
+
+## Vriation scenarios
+
+
+
+## Dependence profiles
+
+
+
+
+
+
+
+
+
+
+# Acknowlegements {-}
+
+This work emerged from a Statistical Consulting project class of the Master in D3S of TSE in cooperation with he Market Research agency BVA who motivated the topic.
+The project was a great experience and we want to thank all particitpants.
+This includes Oliver Henebelle and Alejandro Lara who advised the project from the business.
+We also thank our four students, Claire LEBRUN, Malo Bert, Kyllian JAMES and Gael Charrier for the their work on the project.
+
