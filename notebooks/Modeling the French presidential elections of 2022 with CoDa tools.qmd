@@ -11,6 +11,9 @@ format:
     code-fold: true
     code-tools: true
     df-print: kable
+    embed-resources: true
+    standalone: true
+    self-contained: true
 execute:
   cache: true
   fig-show: "hold"
@@ -19,11 +22,11 @@ execute:
 ```{r setup}
 #| warning: false
 #| message: false
+library("CoDaImpact")
 library("compositions")
 library("data.table")
 library("here")
 library("ggplot2")
-library("ggExtra")
 library("kableExtra")
 library("skimr")
 library("zCompositions")
@@ -42,21 +45,20 @@ The vignette illustrates results of the article from Dargel and Thomas-Agnan (20
 
 # Introduction
 
-We model the french elections using CoDa tools.
-This is more a demonstration of the capacity of these tools.
-
+We illustrate the use of CoDa tools to analyse the results of political elections based on the example of the French presidential elections of 2022.
+Our main focus lays on model interpretation, which is why other issues such as the treatment of zeros are treated more briefly.
 
 
 # Descriptive statistics
 
 The study combine the official election results with census data.
-  -
-  -
+  - [The original census data is available on the INSEE website](https://www.insee.fr/fr/statistiques/6543200#consulter)
+  - [The official election results are provided by the French government and can be dowloaded here](https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour/)
   
 
 ## Data overview 
 
-Lets have a first look at the combined dataset.
+Let us have a first look at the combined data set.
 
 ```{r}
 skim(mun_elec2census)
@@ -66,7 +68,7 @@ skim(mun_elec2census)
 ## Compare losses due to preprocessing 
 
 
-Lets compare the original voting data with the combined voting data to assess the losses and potential biases.
+Let us compare the original voting data with the combined voting data to assess the losses and potential biases.
 
 ```{r}
 # original election columns
@@ -82,16 +84,16 @@ summarize_elec <- function(dt) {
   
   
   dt[,EXPRESSED := NA]
-  dt[,INSCRIBED := sum(.SD), .SDcols = elec_cols]
-  dt[,EXPRESSED := INSCRIBED - ABSTENTIONS - BLANK - INVALID]
+  dt[,REGISTERED := sum(.SD), .SDcols = elec_cols]
+  dt[,EXPRESSED := REGISTERED - ABSTENTIONS - BLANK - INVALID]
   
   show_dt <- data.table(t(dt),keep.rownames = TRUE)
   
   dont_use <- c("MUN_COUNT","DEP_COUNT")
   show_dt[!rn %in% dont_use,
-          "% of INSCRIBED" := pct(V1/dt[["INSCRIBED"]])]
+          "% of REGISTERED" := pct(V1/dt[["REGISTERED"]])]
   
-  dont_use <- c(dont_use, "ABSTENTIONS", "BLANK", "INVALID", "INSCRIBED")
+  dont_use <- c(dont_use, "ABSTENTIONS", "BLANK", "INVALID", "REGISTERED")
   show_dt[!rn %in% dont_use,
           "% of EXPRESSED" := pct(V1/dt[["EXPRESSED"]])]
   names(show_dt)[1:2] <- c("INDICATOR", "COUNT")
@@ -163,8 +165,8 @@ cbind(
 
 #### Before and after
 
-Lets check the impact of the imputation on the distribution of the data.
-We see that our imputation leads an increase in the variance, but does not affected the average in a noticable way.
+Let us check the impact of the imputation on the distribution of the data.
+We see that our imputation leads an increase in the variance, but does not affect the average in a noticeable way.
 This is expected because our imputation method replaces zeros (red bars in the graphic) with points close to the edge of the triangle, which are extreme values in the simplex sense.
 
 ```{r}
@@ -214,8 +216,20 @@ par(opar)
 
 
 
-### In the professional categories (pc) data
+### In the professional categories (PC) data
 
+The professional categories data directly comes from the French population census provided by the INSEE.
+It categorizes the population above the age of 15 into one of eight groups.
+The categories correspond to
+
+  + `C19_POP15P_CS1`: Agriculteurs exploitants
+  + `C19_POP15P_CS2`: Artisans, Commerçants, Chefs d'entreprise
+  + `C19_POP15P_CS3`: Cadres et Professions intellectuelles supérieures
+  + `C19_POP15P_CS4`: Professions intermédiaires
+  + `C19_POP15P_CS5`: Employés
+  + `C19_POP15P_CS6`: Ouvriers
+  + `C19_POP15P_CS7`: Retraités
+  + `C19_POP15P_CS8`: Autres sans activité professionnelle
 
 
 ```{r}
@@ -224,7 +238,8 @@ pc_cols <- pc_cols[grep("^C19_", pc_cols)]
 zero_summary(mun_elec2census[,..pc_cols])
 ```
 
-About $95%$ of case are complete.
+Since the number of municipalities having zero share of some of these categories is to large we proceed with an amalgamation of the eight original groups into four broader categories.
+Using the new categorization about  $95%$ of the municipalities have are complete.
 
 ```{r}
 PROFCAT <- cbind(
@@ -242,8 +257,8 @@ zPatterns(
 ```
 
 `r zv <- sum(0 != rowSums(PROFCAT == 0))`
-We impute the data using the same strateas before.
-Here we impute data in `r zv` cases with `r zv*ncol(PROFCAT)` additional "inscriptions".
+We impute the data using the same strategy as before.
+Here we impute data in `r zv` municipalities leading to `r zv*ncol(PROFCAT)` additional "inscriptions".
 
 ```{r}
 is_zero_row <- 0 != rowSums(PROFCAT == 0) 
@@ -289,13 +304,14 @@ Which is based on the imputed vote and professional categories (PC) data.
 ```{r}
 mun2explore <- data.table(
   ID_MUN = mun_elec2census$ID_MUN,
-  INSCRIBED = rowSums(VOTE_IMP))
+  REGISTERED = rowSums(VOTE_IMP))
 mun2explore <- cbind(mun2explore, VOTE_IMP, PROFCAT_IMP)
 ```
 
 
 ## Concentration
 
+(Not yet ready)
 
 
 ## Heteroskedasticity
@@ -306,8 +322,8 @@ The scatter plot below shows that that the share of "non votes" is directly impa
 Additionally, its volatility seems to decrease with the size of the municipality in terms number if voters.
 
 ```{r}
-ggplot(mun2explore[INSCRIBED < 300000,], aes(x = sqrt(INSCRIBED), y = NON_VOTE/INSCRIBED)) +
-  # geom_boxplot(aes(x = INSCRIBED_BINS, y = ABSTENTIONS/INSCRIBED)) +
+ggplot(mun2explore[REGISTERED < 300000,], aes(x = sqrt(REGISTERED), y = NON_VOTE/REGISTERED)) +
+  # geom_boxplot(aes(x = REGISTERED_BINS, y = ABSTENTIONS/REGISTERED)) +
   geom_point() +
   geom_smooth() +
   theme_bw() +
@@ -319,14 +335,14 @@ A similar pattern is observed for all vote variables.
 ```{r}
 seq125 <- c(0, unlist(lapply(10^seq(10), "*", c(1,2,5))))
 seqSqr <- seq(0,15)^2 * 1000 
-mun2explore[,INSCRIBED_BINS := cut(INSCRIBED,c(seqSqr,Inf))]
+mun2explore[,REGISTERED_BINS := cut(REGISTERED,c(seqSqr,Inf))]
 mun2explore_long <- 
   melt(mun2explore,
-       id.vars = c("ID_MUN","INSCRIBED_BINS"),
+       id.vars = c("ID_MUN","REGISTERED_BINS"),
        measure.vars = colnames(VOTE))
 
 mun2explore_long[,value_rel := value/sum(value), by = "ID_MUN"]
-ggplot(mun2explore_long, aes(x = INSCRIBED_BINS, y = value_rel)) +
+ggplot(mun2explore_long, aes(x = REGISTERED_BINS, y = value_rel)) +
   geom_boxplot(outlier.size = .1) +
   facet_wrap("variable", ncol = 3) +
   theme_classic() +
@@ -340,11 +356,11 @@ And for the PC variables as well.
 ```{r}
 mun2explore_long2 <- 
   melt(mun2explore,
-       id.vars = c("ID_MUN","INSCRIBED_BINS"),
+       id.vars = c("ID_MUN","REGISTERED_BINS"),
        measure.vars = colnames(PROFCAT))
 
 mun2explore_long2[,value_rel := value/sum(value), by = "ID_MUN"]
-ggplot(mun2explore_long2, aes(x = INSCRIBED_BINS, y = value_rel)) +
+ggplot(mun2explore_long2, aes(x = REGISTERED_BINS, y = value_rel)) +
   geom_boxplot(outlier.size = .1) +
   facet_wrap("variable", ncol = 2) +
   theme_classic() +
@@ -360,16 +376,16 @@ ggplot(mun2explore_long2, aes(x = INSCRIBED_BINS, y = value_rel)) +
 ```{r}
 mun2model <- data.frame(
   ID_MUN = mun_elec2census$ID_MUN,
-  INSCRIBED = rowSums(as.matrix(VOTE_IMP)),
-  INSCRIBED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
+  REGISTERED = rowSums(as.matrix(VOTE_IMP)),
+  REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
 mun2model[["VOTE"]] <- acomp(VOTE_IMP)
 mun2model[["PROFCAT"]] <- acomp(PROFCAT_IMP)
 
 logit <- function(p) log(p/(p+1))
 NV_model <- lm(
-  logit(VOTE[,6]) ~  ilr(PROFCAT) + log(INSCRIBED),
+  logit(VOTE[,6]) ~  ilr(PROFCAT) + log(REGISTERED),
   data = mun2model,
-  weights = INSCRIBED)
+  weights = REGISTERED)
 summary(NV_model)
 ```
 
@@ -383,7 +399,7 @@ barplot(clr_coefs, names.arg = colnames(PROFCAT))
 
 ## Variation scenarios
 
-Let us investigate how the model react to changes when the PC composition changes in paris.
+Let us investigate how the model react to changes when the PC composition changes in Paris.
 
 ```{r}
 paris <- "75056"
@@ -480,7 +496,7 @@ plot.acomp(paris_pcseq2["0",-1, drop = FALSE], col = "red", add = TRUE, pch = "X
 par(opar)
 ```
 
-Here we have non-linear changes.
+Here we have non-linear changes in the euclidean sense.
 We see that the lines cross in the origin and at the position of pairs their values equal as before.
 
 ```{r}
@@ -534,9 +550,9 @@ ggplot(paris_pcseq2_gg) +
 
 ```{r}
 VOTE_model <- lm(
-  ilr(VOTE) ~  ilr(PROFCAT) + log(INSCRIBED),
+  ilr(VOTE) ~  ilr(PROFCAT) + log(REGISTERED),
   data = mun2model,
-  weights = INSCRIBED)
+  weights = REGISTERED)
 summary(VOTE_model)
 ```
 
@@ -556,19 +572,22 @@ ggplot(clr_coefs_gg) +
   coord_flip() +
   geom_hline(yintercept = 0) +
   geom_segment(aes(x=variable, xend=variable, y=0, yend=value, col = variable)) +
+  geom_errorbar(aes(ymax=value*c(1.15),
+                    ymin=value*c(.85),
+                    x=variable,  col = variable)) +
   geom_point(aes(x=variable, y = value, col = variable)) +
   geom_boxplot(aes(y = value, x = "All")) +
   facet_wrap("PROFCAT") +
   theme(legend.position = "none")
 
-ggplot(clr_coefs_gg) +
-  geom_segment(aes(x=PROFCAT, xend=PROFCAT, y=0, yend=value)) +
-  geom_point(aes(x=PROFCAT, y = value)) +
-  # geom_col(aes(y = value, group = variable, x = PROFCAT, fill = variable, col = variable),
-           # position = "dodge") +
-  geom_boxplot(aes(y = value, x = "All")) +
-  theme_bw() +
-  facet_wrap("variable")
+# ggplot(clr_coefs_gg) +
+#   geom_segment(aes(x=PROFCAT, xend=PROFCAT, y=0, yend=value)) +
+#   geom_point(aes(x=PROFCAT, y = value)) +
+#   # geom_col(aes(y = value, group = variable, x = PROFCAT, fill = variable, col = variable),
+#            # position = "dodge") +
+#   geom_boxplot(aes(y = value, x = "All")) +
+#   theme_bw() +
+#   facet_wrap("variable")
 ```
 
 
@@ -590,7 +609,7 @@ ggplot(clr_coefs_gg) +
 # Acknowlegements {-}
 
 This work emerged from a Statistical Consulting project class of the Master in D3S of TSE in cooperation with he Market Research agency BVA who motivated the topic.
-The project was a great experience and we want to thank all particitpants.
+The project was a great experience and we want to thank all participants.
 This includes Oliver Henebelle and Alejandro Lara who advised the project from the business.
 We also thank our four students, Claire LEBRUN, Malo Bert, Kyllian JAMES and Gael Charrier for the their work on the project.
 
