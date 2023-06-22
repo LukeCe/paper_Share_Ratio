@@ -10,6 +10,9 @@ library("stringr")
 # local
 source(here("R/utils_messages.R"))
 
+# dir
+dir.create(here("in/data"),showWarnings = FALSE, recursive = TRUE)
+
 # ---- Election data a municipality level -------------------------------------
 sec___________________________________________________________________________(
   "Election data on municipality level")
@@ -17,7 +20,9 @@ sec___________________________________________________________________________(
 msg <- "Get data from stable url: "
 mun_elec <- "https://www.data.gouv.fr/fr/datasets/r/aae19572-df6d-4e05-ab09-06430ca8acde"
 message(msg, mun_elec)
-mun_elec <- fread(mun_elec,sep = ";",encoding = 'Latin-1')
+suppressWarnings({
+mun_elec <- fread(mun_elec, sep = ";",encoding = 'Latin-1',check.names = FALSE)
+})
 
 
 subsec________________________________________________________________________(

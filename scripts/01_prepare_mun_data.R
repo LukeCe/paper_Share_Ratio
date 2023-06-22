@@ -9,6 +9,9 @@ source(here("R/utils_messages.R"))
 mun_elec <- readRDS("in/data/mun_elec.Rds")
 mun_profcat <- readRDS("in/data/mun_profcat.Rds")
 
+# dir
+dir.create(here("out/data"),showWarnings = FALSE, recursive = TRUE)
+
 # ---- ID_MUNbine data sources ---------------------------------------------------
 sec___________________________________________________________________________(
   "Combine election and cesus data.")

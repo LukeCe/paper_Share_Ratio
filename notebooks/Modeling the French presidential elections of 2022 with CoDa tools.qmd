@@ -19,6 +19,13 @@ execute:
   fig-show: "hold"
 ---
 
+```{r}
+#| include: false
+dir.create(here::here("out","figures"),showWarnings = FALSE,recursive = TRUE)
+```
+
+
+
 ```{r setup}
 #| warning: false
 #| message: false
@@ -75,24 +82,24 @@ Let us compare the original voting data with the combined voting data to assess 
 
 ```{r}
 rename_elec <- c(
-  ABSTENTIONS = "Abstention",
-  BLANK = "Blank",
-  INVALID = "Invalid",
+  MACRON_Emmanuel = "Macron",
+  LE_PEN_Marine = "Le Pen",
+  MELENCHON_Jean_Luc = "Mélenchon",
+  LEFT = "Left",
+  RIGHT = "Right",
+  NON_VOTE = "No vote",
   ARTHAUD_Nathalie = "Arthaud",
   ROUSSEL_Fabien = "Roussel",
-  MACRON_Emmanuel = "Macron",
   LASSALLE_Jean = "Lasalle",
-  LE_PEN_Marine = "Le Pen",
   ZEMMOUR_Eric = "Zemmour",
-  MELENCHON_Jean_Luc = "Mélenchon",
   HIDALGO_Anne = "Hidalgo",
   JADOT_Yannick = "Jadot",
   PECRESSE_Valerie = "Pécresse",
   POUTOU_Philippe = "Poutou",
   DUPONT_AIGNAN_Nicolas = "Dupont-Aignan",
-  LEFT = "Left",
-  RIGHT = "Right",
-  NON_VOTE = "No vote",
+  ABSTENTIONS = "Abstention",
+  BLANK = "Blank",
+  INVALID = "Invalid",
   EXPRESSED = "Expressed",
   REGISTERED = "Registered")
 
@@ -174,11 +181,11 @@ VOTE <- cbind(
   RIGHT = as.integer(rowSums(mun_elec2census[,..right_bloc])),
   NON_VOTE = as.integer(rowSums(mun_elec2census[,c("ABSTENTIONS", "INVALID","BLANK"),])))
 
+vote_names <- rename_elec[colnames(VOTE)]
 zPatterns(
-  VOTE,
-  label="0",
-  bar.labels = c(T,T),
-  axis.labels = c(NA,NA))
+  `names<-`(VOTE,vote_names),
+  bar.labels = TRUE,
+  label="0")
 ```
 
 `r zv <- sum(0 != rowSums(VOTE == 0))`
@@ -285,7 +292,7 @@ PROFCAT <- cbind(
 zPatterns(
   PROFCAT,
   label="0",
-  bar.labels = c(T,T),
+  bar.labels = TRUE,
   axis.labels = c(NA,NA))
 ```
 
@@ -388,6 +395,7 @@ ggplot(mun2explore_long, aes(x = REGISTERED_BINS, y = value_rel)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = .5)) 
 
+ggsave(here("out/figures", "vote6_boxplots.pdf"), width = 7, height = 6)
 ```
 
 
@@ -406,7 +414,9 @@ ggplot(mun2explore_long2, aes(x = REGISTERED_BINS, y = value_rel)) +
   scale_y_continuous(name = "Vote share",labels = scales::percent) +
   labs(x = "Number of registered voters") +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = .5)) 
+  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = .5))
+
+ggsave(here("out/figures", "profcat4_boxplots.pdf"), width = 7, height = 6)
 ```
 
 
@@ -420,8 +430,8 @@ mun2model <- data.frame(
   ID_MUN = mun_elec2census$ID_MUN,
   REGISTERED = rowSums(as.matrix(VOTE_IMP)),
   REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
-mun2model[["VOTE"]] <- acomp(VOTE_IMP)
-mun2model[["PROFCAT"]] <- acomp(PROFCAT_IMP)
+mun2model[["VOTE"]] <- as.matrix(VOTE_IMP)/mun2model$REGISTERED
+mun2model[["PROFCAT"]] <- as.matrix(PROFCAT_IMP)/rowSums(PROFCAT_IMP)
 
 logit <- function(p) log(p/(p+1))
 NV_model <- lm(
@@ -446,7 +456,7 @@ Let us investigate how the model react to changes when the PC composition change
 ```{r}
 paris <- "75056"
 paris <- mun2model[mun2model$ID_MUN == paris,,drop = FALSE]
-paris[,"VOTE"]
+paris$VOTE
 paris$PROFCAT
 ```
 
@@ -463,7 +473,7 @@ names(paris_pcseq1) <- colnames(PROFCAT)
 window <- as.character(seq(-20,20,by = 1))
 
 barplot(acomp(paris_pcseq1[window,,drop=FALSE]))
-dev.copy(pdf, here("out/figures/","Xe_change_barplot.pdf"))
+dev.copy(pdf, here("out/figures","Xe_change_barplot.pdf"))
 dev.off()
 ```
 
@@ -643,40 +653,36 @@ summary(VOTE_model)
 ## Coefficients  and Elasticities
 
 ```{r}
+#| warning: false
+
 clr_coefs <- (ilrBase(D = 4)) %*% as.matrix(ilr2clr(VOTE_model$coefficients[2:4,]))
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)")
+clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = c("Mean elasticity", rev(rename_elec)))
+clr_confint_all <- clr_confint
+clr_confint_all$Y <- factor("Mean elasticity", levels(clr_confint_all$Y))
+clr_confint_all$SD <- clr_confint_all$EST
+clr_confint_all$EST <- NA
+clr_confint_all$Q025 <- NA
+clr_confint_all$Q975 <- NA
+clr_confint_all <- unique(clr_confint_all)
 
-colnames(clr_coefs) <- colnames(VOTE)
-clr_coefs <- cbind(PROFCAT = colnames(PROFCAT), data.table(clr_coefs))
-clr_coefs_gg <- melt(clr_coefs, id.var = "PROFCAT")
-clr_coefs_gg[,variable := rename_elec[as.character(variable)]]
-clr_coefs_gg[,variable := factor(variable, levels = rename_elec)]
-
-ggplot(clr_coefs_gg) +
-  # geom_col(aes(y = value, group = variable, x = variable, fill = variable, col = variable),
-  #          position = "dodge") +
+ggplot(rbind(clr_confint,clr_confint_all)) +
   theme_bw() +
   coord_flip() +
   geom_hline(yintercept = 0) +
-  geom_segment(aes(x=variable, xend=variable, y=0, yend=value, col = variable)) +
-  geom_point(aes(x=variable, y = value*(1.15),col = variable), pch = "]") +
-  geom_point(aes(x=variable, y = value*(.85),col = variable), pch = "[") +
-  # geom_errorbar(aes(ymax=value*c(1.15),
-  #                   ymin=value*c(.85),
-  #                   x=variable,  col = variable)) +
-  geom_point(aes(x=variable, y = value, col = variable)) +
-  geom_boxplot(aes(y = value, x = "All")) +
-  facet_wrap("PROFCAT") +
+  geom_segment(aes(x=Y, xend=Y, y=0, yend=EST, col = Y)) +
+  geom_point(aes(x=Y, y = EST, col = Y)) +
+  geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
+  geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
+  geom_boxplot(aes(y = EST, x = Y),data = data.frame(
+    EST = clr_confint_all$SD,
+    X = clr_confint_all$X,
+    Y = "Mean elasticity")) +
+  facet_wrap("X") +
+  labs(y = "clr parameter values & confidence intervals\ndisribution of mean elasitcity", x = NULL) +
   theme(legend.position = "none")
 
-# ggplot(clr_coefs_gg) +
-#   geom_segment(aes(x=PROFCAT, xend=PROFCAT, y=0, yend=value)) +
-#   geom_point(aes(x=PROFCAT, y = value)) +
-#   # geom_col(aes(y = value, group = variable, x = PROFCAT, fill = variable, col = variable),
-#            # position = "dodge") +
-#   geom_boxplot(aes(y = value, x = "All")) +
-#   theme_bw() +
-#   facet_wrap("variable")
+ggsave(here("out/figures", "clrB_profcat.pdf"), height = 4, width = 7)
 ```
 
 
