@@ -46,14 +46,16 @@ The vignette illustrates results of the article from Dargel and Thomas-Agnan (20
 # Introduction
 
 We illustrate the use of CoDa tools to analyse the results of political elections based on the example of the French presidential elections of 2022.
-Our main focus lays on model interpretation, which is why other issues such as the treatment of zeros are treated more briefly.
+Our main focus lays on the illustration of mathematical tools that enable new ways for interpretation of CoDa models.
+Other issues such as the selection of explanatory variables and the treatment of zeros are treated more briefly.
 
 
 # Descriptive statistics
 
 The study combine the official election results with census data.
-  - [The original census data is available on the INSEE website](https://www.insee.fr/fr/statistiques/6543200#consulter)
-  - [The official election results are provided by the French government and can be dowloaded here](https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour/)
+
+  -  [The original census data is available on the INSEE website](https://www.insee.fr/fr/statistiques/6543200#consulter)
+  -  [The official election results are provided by the French government and can be dowloaded here](https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour/)
   
 
 ## Data overview 
@@ -70,6 +72,33 @@ skim(mun_elec2census)
 
 Let us compare the original voting data with the combined voting data to assess the losses and potential biases.
 
+
+```{r}
+rename_elec <- c(
+  ABSTENTIONS = "Abstention",
+  BLANK = "Blank",
+  INVALID = "Invalid",
+  ARTHAUD_Nathalie = "Arthaud",
+  ROUSSEL_Fabien = "Roussel",
+  MACRON_Emmanuel = "Macron",
+  LASSALLE_Jean = "Lasalle",
+  LE_PEN_Marine = "Le Pen",
+  ZEMMOUR_Eric = "Zemmour",
+  MELENCHON_Jean_Luc = "Mélenchon",
+  HIDALGO_Anne = "Hidalgo",
+  JADOT_Yannick = "Jadot",
+  PECRESSE_Valerie = "Pécresse",
+  POUTOU_Philippe = "Poutou",
+  DUPONT_AIGNAN_Nicolas = "Dupont-Aignan",
+  LEFT = "Left",
+  RIGHT = "Right",
+  NON_VOTE = "No vote",
+  EXPRESSED = "Expressed",
+  REGISTERED = "Registered")
+
+```
+
+
 ```{r}
 # original election columns
 elec_cols <- setdiff(names(mun_elec), c("ID_MUN", "NAME_MUN", "NAME_DEP"))
@@ -77,8 +106,8 @@ pct <- function(x) scales::percent(x,accuracy = .1)
 summarize_elec <- function(dt) {
   
   dt <- data.table(
-    MUN_COUNT = nrow(dt),
-    DEP_COUNT = length(unique(dt$NAME_DEP)),
+    Municipalities = nrow(dt),
+    Departements = length(unique(dt$NAME_DEP)),
     dt[,lapply(.SD, sum), .SDcols = elec_cols]
   )
   
@@ -89,22 +118,22 @@ summarize_elec <- function(dt) {
   
   show_dt <- data.table(t(dt),keep.rownames = TRUE)
   
-  dont_use <- c("MUN_COUNT","DEP_COUNT")
+  dont_use <- c("Municipalities","Departements")
   show_dt[!rn %in% dont_use,
           "% of REGISTERED" := pct(V1/dt[["REGISTERED"]])]
   
   dont_use <- c(dont_use, "ABSTENTIONS", "BLANK", "INVALID", "REGISTERED")
   show_dt[!rn %in% dont_use,
           "% of EXPRESSED" := pct(V1/dt[["EXPRESSED"]])]
-  names(show_dt)[1:2] <- c("INDICATOR", "COUNT")
+  names(show_dt)[1:2] <- c("Indicator", "Count")
   show_dt
 }  
 
-
 elec_original <- summarize_elec(mun_elec)
 elec_combined <- summarize_elec(mun_elec2census)
-elec_combined <- cbind(LOSS = elec_original[["COUNT"]] - elec_combined[["COUNT"]], elec_combined[,-1])
-elec_combined <- cbind("% LOSS" = pct(elec_combined[["LOSS"]]/elec_combined[["COUNT"]]), elec_combined)
+elec_combined <- cbind(Loss = elec_original[["Count"]] - elec_combined[["Count"]], elec_combined[,-1])
+elec_combined <- cbind("% Loss" = pct(elec_combined[["Loss"]]/elec_combined[["Count"]]), elec_combined)
+elec_original[Indicator %in% names(rename_elec),Indicator := rename_elec[Indicator]]
 kable(cbind(elec_original, elec_combined)) |> 
   kable_classic(full_width = F) |> 
   add_header_above(c(" " = 1, "Full election data" = 3, "Combined election data" = 5)) |> 
@@ -118,6 +147,10 @@ kable(cbind(elec_original, elec_combined)) |>
 
 ## Check for problems with zeros
 
+Since CoDa models do not handle zero proportions in either the dependent or independent compositional variables we have to treat the problem of zero before going to the modelling phase.
+Here we a combination of amalgamations and imputations which corresponds to merging several components and replacing zeros with small values.
+We do not claim any sociological validity for the grouping of candidates and professional categories
+While the grouping we propose is based our intuitive understanding a true study of electoral sociology should place much more thought in these actions.
 
 ### In the vote data
 
@@ -125,7 +158,7 @@ We first check for zeros in the dependent variables.
 
 ```{r}
 zero_summary <- function(dt) dt[,lapply(.SD, function(x) pct(sum(x==0)/.N))]
-zero_summary(mun_elec2census[,..elec_cols])
+t(zero_summary(mun_elec2census[,..elec_cols]))
 ```
 
 One way to solve the problem is amalgamations.
@@ -137,9 +170,9 @@ right_bloc <- c("ZEMMOUR_Eric", "PECRESSE_Valerie", "LASSALLE_Jean", "DUPONT_AIG
 
 VOTE <- cbind(
   mun_elec2census[,c("MACRON_Emmanuel", "LE_PEN_Marine", "MELENCHON_Jean_Luc")],
-  LEFT = rowSums(mun_elec2census[,..left_bloc]),
-  RIGHT = rowSums(mun_elec2census[,..right_bloc]),
-  NON_VOTE = rowSums(mun_elec2census[,c("ABSTENTIONS", "INVALID","BLANK"),]))
+  LEFT = as.integer(rowSums(mun_elec2census[,..left_bloc])),
+  RIGHT = as.integer(rowSums(mun_elec2census[,..right_bloc])),
+  NON_VOTE = as.integer(rowSums(mun_elec2census[,c("ABSTENTIONS", "INVALID","BLANK"),])))
 
 zPatterns(
   VOTE,
@@ -235,7 +268,7 @@ The categories correspond to
 ```{r}
 pc_cols <- names(mun_elec2census)
 pc_cols <- pc_cols[grep("^C19_", pc_cols)]
-zero_summary(mun_elec2census[,..pc_cols])
+t(zero_summary(mun_elec2census[,..pc_cols]))
 ```
 
 Since the number of municipalities having zero share of some of these categories is to large we proceed with an amalgamation of the eight original groups into four broader categories.
@@ -243,10 +276,10 @@ Using the new categorization about  $95%$ of the municipalities have are complet
 
 ```{r}
 PROFCAT <- cbind(
-  "PC1" = mun_elec2census[,C19_POP15P_CS3 + C19_POP15P_CS4],
-  "PC2" = mun_elec2census[,C19_POP15P_CS5 + C19_POP15P_CS6],
-  "PC3" = mun_elec2census[,C19_POP15P_CS7],
-  "PC4" = mun_elec2census[,C19_POP15P_CS1 + C19_POP15P_CS2 + C19_POP15P_CS8]
+  "Knowledge" = mun_elec2census[,C19_POP15P_CS3 + C19_POP15P_CS4],
+  "Workers"   = mun_elec2census[,C19_POP15P_CS5 + C19_POP15P_CS6],
+  "Retired"   = mun_elec2census[,C19_POP15P_CS7],
+  "Other"     = mun_elec2census[,C19_POP15P_CS1 + C19_POP15P_CS2 + C19_POP15P_CS8]
 )
 
 zPatterns(
@@ -275,7 +308,7 @@ We have the same results as before, but the increase in variance appears more pr
 
 ```{r}
 #| fig-show: "hold"
-opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
+opar <- par(mar=c(0,4,0,4), mfrow = c(1,2))
 simplex_isodensity(acomp(PROFCAT_IMP[,(1:3)]))
 title(sub = "Imputed", outer = FALSE)
 simplex_isodensity(acomp(PROFCAT[,(1:3)]))
@@ -335,18 +368,25 @@ A similar pattern is observed for all vote variables.
 ```{r}
 seq125 <- c(0, unlist(lapply(10^seq(10), "*", c(1,2,5))))
 seqSqr <- seq(0,15)^2 * 1000 
-mun2explore[,REGISTERED_BINS := cut(REGISTERED,c(seqSqr,Inf))]
+namesSqr <- c(
+  sprintf("..., %s]", seqSqr[-1]), 
+  sprintf("(%s, ...", seqSqr[length(seqSqr)]))
+mun2explore[,REGISTERED_BINS := cut(REGISTERED,c(seqSqr,Inf),labels = namesSqr)]
 mun2explore_long <- 
   melt(mun2explore,
        id.vars = c("ID_MUN","REGISTERED_BINS"),
        measure.vars = colnames(VOTE))
 
 mun2explore_long[,value_rel := value/sum(value), by = "ID_MUN"]
+mun2explore_long[,variable:=rename_elec[as.character(variable)]]
+mun2explore_long[,variable:=factor(variable, levels = rename_elec)]
 ggplot(mun2explore_long, aes(x = REGISTERED_BINS, y = value_rel)) +
   geom_boxplot(outlier.size = .1) +
   facet_wrap("variable", ncol = 3) +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 90))
+  scale_y_continuous(name = "Vote share",labels = scales::percent) +
+  labs(x = "Number of registered voters") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = .5)) 
 
 ```
 
@@ -363,8 +403,10 @@ mun2explore_long2[,value_rel := value/sum(value), by = "ID_MUN"]
 ggplot(mun2explore_long2, aes(x = REGISTERED_BINS, y = value_rel)) +
   geom_boxplot(outlier.size = .1) +
   facet_wrap("variable", ncol = 2) +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 90))
+  scale_y_continuous(name = "Vote share",labels = scales::percent) +
+  labs(x = "Number of registered voters") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90,hjust = 1,vjust = .5)) 
 ```
 
 
@@ -404,7 +446,7 @@ Let us investigate how the model react to changes when the PC composition change
 ```{r}
 paris <- "75056"
 paris <- mun2model[mun2model$ID_MUN == paris,,drop = FALSE]
-paris$VOTE
+paris[,"VOTE"]
 paris$PROFCAT
 ```
 
@@ -417,20 +459,32 @@ paris_pcseq1 <- CoDa_seq(
   comp_to = c(1e10,1,1,1)*as.numeric(paris$PROFCAT),
   add_opposite = TRUE)
 
-barplot(acomp(paris_pcseq1[,,drop=FALSE]))
+names(paris_pcseq1) <- colnames(PROFCAT)
+window <- as.character(seq(-20,20,by = 1))
+
+barplot(acomp(paris_pcseq1[window,,drop=FALSE]))
+dev.copy(pdf, here("out/figures/","Xe_change_barplot.pdf"))
+dev.off()
 ```
 
 This is a special direction that leaves the ratios between all other components constant.
 
 ```{r}
 #| fig-show: "hold"
-opar <- par(mfrow = c(1,2))
+opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
 plot.acomp(paris_pcseq1[,-4])
-plot.acomp(paris_pcseq1["0",-4, drop = FALSE], col = "red", add = TRUE, pch = "X")
+plot.acomp(paris_pcseq1["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+# plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
 
 
 plot.acomp(paris_pcseq1[,-1])
-plot.acomp(paris_pcseq1["0",-1, drop = FALSE], col = "red", add = TRUE, pch = "X")
+plot.acomp(paris_pcseq1["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+# plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
+
+dev.copy(pdf, here("out/figures/","Xe_change_ternary.pdf"),
+         width = 7,
+         height = 3)
+dev.off()
 par(opar)
 ```
 
@@ -445,27 +499,36 @@ ggplot(paris_pcseq1_gg) +
   geom_line(aes(x = PC1, y = PC2, col = "2", lty = "2"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC3, col = "3", lty = "3"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC4, col = "4", lty = "4"), lwd = .51) +
-  geom_hline(yintercept = 0, col = "black") +
+  geom_hline(yintercept = 1, col = "black") +
   geom_boxplot(
     data = data.frame(PC1 = mun2model$PROFCAT[,1]),
-    mapping = aes(x = PC1, y = -.0625),
+    mapping = aes(x = PC1, y = 1 + .0625),
     varwidth = TRUE,
     size = .5,
     col = "red",
     alpha = .25,
     width = .05) +
-  scale_x_continuous(labels = scales::percent) +
-  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(
+    labels = scales::percent,
+    sec.axis = dup_axis(name= "Boxplot of % in professional category: Knowlege")) +
+  scale_y_continuous(
+    labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
     breaks = c("1","2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "PC") +
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
   scale_linetype_manual(
     breaks = c("1","2", "3", "4"),
     values = 1:4,
-    name = "PC") +
-  labs(x = "% PC 1", y = "% PC") +
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
+  labs(x = "% in professional category: Knowlege",
+       y = "% in professional category") +
+  coord_equal() +
   theme_bw()
+
+ggsave(here("out/figures/Xe_change_scatter.pdf"), height = 6, width = 6)
 ```
 
 
@@ -480,7 +543,12 @@ paris_pcseq2 <- CoDa_path(
   add_opposite = TRUE,
   step_size = attr(paris_pcseq1,"step_size"))
 
-barplot(acomp(paris_pcseq2[,,drop=FALSE]))
+names(paris_pcseq2) <- colnames(PROFCAT)
+window <- as.character(seq(-60,60,by = 4))
+
+barplot(acomp(paris_pcseq2[window,,drop=FALSE]))
+dev.copy(pdf, here("out/figures/","Xu_change_barplot.pdf"))
+dev.off()
 ```
 
 Here the paths in the simplex look more complex.
@@ -489,10 +557,18 @@ Here the paths in the simplex look more complex.
 #| fig-show: "hold"
 opar <- par(mfrow = c(1,2))
 plot.acomp(paris_pcseq2[,-4])
-plot.acomp(paris_pcseq2["0",-4, drop = FALSE], col = "red", add = TRUE, pch = "X")
+plot.acomp(paris_pcseq2["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
 
 plot.acomp(paris_pcseq2[,-1])
-plot.acomp(paris_pcseq2["0",-1, drop = FALSE], col = "red", add = TRUE, pch = "X")
+plot.acomp(paris_pcseq2["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
+par(opar)
+
+dev.copy(pdf, here("out/figures/","Xu_change_ternary.pdf"),
+         width = 7,
+         height = 3)
+dev.off()
 par(opar)
 ```
 
@@ -510,28 +586,36 @@ ggplot(paris_pcseq2_gg) +
   geom_line(aes(x = PC1, y = PC2, col = "2", lty = "2"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC3, col = "3", lty = "3"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC4, col = "4", lty = "4"), lwd = .51) +
-  geom_hline(yintercept = 0, col = "black") +
+  geom_hline(yintercept = 1, col = "black") +
   geom_boxplot(
     data = data.frame(PC1 = mun2model$PROFCAT[,1]),
-    mapping = aes(x = PC1, y = -.0625),
+    mapping = aes(x = PC1, y = 1 + .0625),
     varwidth = TRUE,
     size = .5,
     col = "red",
     alpha = .25,
     width = .05) +
-  scale_x_continuous(labels = scales::percent) +
-  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(
+    labels = scales::percent,
+    sec.axis = dup_axis(name= "Boxplot of % in professional category: Knowlege")) +
+  scale_y_continuous(
+    labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
     breaks = c("1","2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\nCategory") +
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
   scale_linetype_manual(
     breaks = c("1","2", "3", "4"),
     values = 1:4,
-    name = "Professional\nCategory") +
-  labs(x = "% PC 1", y = "% PC") +
-  theme_bw() +
-  theme(axis.line.x = element_blank())
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
+  labs(x = "% in professional category: Knowlege",
+       y = "% in professional category") +
+  coord_equal() +
+  theme_bw()
+
+ggsave(here("out/figures/Xu_change_scatter.pdf"), height = 6, width = 6)
 ```
 
 
@@ -551,8 +635,7 @@ ggplot(paris_pcseq2_gg) +
 ```{r}
 VOTE_model <- lm(
   ilr(VOTE) ~  ilr(PROFCAT) + log(REGISTERED),
-  data = mun2model,
-  weights = REGISTERED)
+  data = mun2model)
 summary(VOTE_model)
 ```
 
@@ -561,9 +644,13 @@ summary(VOTE_model)
 
 ```{r}
 clr_coefs <- (ilrBase(D = 4)) %*% as.matrix(ilr2clr(VOTE_model$coefficients[2:4,]))
+clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)")
+
 colnames(clr_coefs) <- colnames(VOTE)
 clr_coefs <- cbind(PROFCAT = colnames(PROFCAT), data.table(clr_coefs))
 clr_coefs_gg <- melt(clr_coefs, id.var = "PROFCAT")
+clr_coefs_gg[,variable := rename_elec[as.character(variable)]]
+clr_coefs_gg[,variable := factor(variable, levels = rename_elec)]
 
 ggplot(clr_coefs_gg) +
   # geom_col(aes(y = value, group = variable, x = variable, fill = variable, col = variable),
@@ -572,9 +659,11 @@ ggplot(clr_coefs_gg) +
   coord_flip() +
   geom_hline(yintercept = 0) +
   geom_segment(aes(x=variable, xend=variable, y=0, yend=value, col = variable)) +
-  geom_errorbar(aes(ymax=value*c(1.15),
-                    ymin=value*c(.85),
-                    x=variable,  col = variable)) +
+  geom_point(aes(x=variable, y = value*(1.15),col = variable), pch = "]") +
+  geom_point(aes(x=variable, y = value*(.85),col = variable), pch = "[") +
+  # geom_errorbar(aes(ymax=value*c(1.15),
+  #                   ymin=value*c(.85),
+  #                   x=variable,  col = variable)) +
   geom_point(aes(x=variable, y = value, col = variable)) +
   geom_boxplot(aes(y = value, x = "All")) +
   facet_wrap("PROFCAT") +
@@ -591,7 +680,7 @@ ggplot(clr_coefs_gg) +
 ```
 
 
-## Vriation scenarios
+## Variation scenarios
 
 
 
@@ -599,17 +688,9 @@ ggplot(clr_coefs_gg) +
 
 
 
-
-
-
-
-
-
-
 # Acknowlegements {-}
 
-This work emerged from a Statistical Consulting project class of the Master in D3S of TSE in cooperation with he Market Research agency BVA who motivated the topic.
-The project was a great experience and we want to thank all participants.
-This includes Oliver Henebelle and Alejandro Lara who advised the project from the business.
-We also thank our four students, Claire LEBRUN, Malo Bert, Kyllian JAMES and Gael Charrier for the their work on the project.
+The example used to illustrate this work is taken from a Statistical Consulting project class of the Master in Data Science for Social Sciences of The Toulouse School of economics, in cooperation with he Market Research agency BVA.
+The project was a great experience and we want thank again all participants.
+This includes Olivier Hennebelle and Alejandro Lara who advised the project from the side of BVA and our four students, Claire Lebrun, Malo Bert, Kyllian James and Gael Charrier.
 
