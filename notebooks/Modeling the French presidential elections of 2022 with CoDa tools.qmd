@@ -423,52 +423,56 @@ ggsave(here("out/figures", "profcat4_boxplots.pdf"), width = 7, height = 6)
 ##  Correlations
 
 
-# Model for the share of "non votes"
+# Understanding "linear" changes in compositional variables
 
-```{r}
-mun2model <- data.frame(
-  ID_MUN = mun_elec2census$ID_MUN,
-  REGISTERED = rowSums(as.matrix(VOTE_IMP)),
-  REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
-mun2model[["VOTE"]] <- as.matrix(VOTE_IMP)/mun2model$REGISTERED
-mun2model[["PROFCAT"]] <- as.matrix(PROFCAT_IMP)/rowSums(PROFCAT_IMP)
-
-logit <- function(p) log(p/(p+1))
-NV_model <- lm(
-  logit(VOTE[,6]) ~  ilr(PROFCAT) + log(REGISTERED),
-  data = mun2model,
-  weights = REGISTERED)
-summary(NV_model)
-```
-
-
-## Coefficients and Semi-elasticites
-
-```{r}
-clr_coefs <- matrix(ilr2clr(NV_model$coefficients[2:4]),nrow = 1)
-barplot(clr_coefs, names.arg = colnames(PROFCAT))
-```
-
-## Variation scenarios
-
-Let us investigate how the model react to changes when the PC composition changes in Paris.
+Here illustrate how compositional variables change using based on the composition of semiprofessional categories in Paris.
+In the next section we will show how these changes affect the dependent variable on a model.
+Below we have the observed composition for the Paris municipality.
 
 ```{r}
 paris <- "75056"
 paris <- mun2model[mun2model$ID_MUN == paris,,drop = FALSE]
-paris$VOTE
 paris$PROFCAT
 ```
 
+In the following two subsections take this point of departure and add a sequence of linear increments, where linearity is understood with respect to the geometry of the simplex.
+It should be evident that a linear increment of a multivariate vector is defined by a direction (which we normalize to unit length) and a step size.
 
-### Changing in direction of first summit
+## Changing in direction of first summit
 
 ```{r}
 paris_pcseq1 <- CoDa_seq(
   comp_from = paris$PROFCAT,
   comp_to = c(1e10,1,1,1)*as.numeric(paris$PROFCAT),
   add_opposite = TRUE)
+```
 
+Here we consider the direction that points from the original composition to directly to the first summit of the simplex.
+For our example the first summit identifies the share of "Knowledge" workers.
+Moving along this direction has the special property that the subcomposition that excludes the first element remains constant after closure.
+This becomes evident when looking at the two ternary diagrams below, where the first shows the subcomposition that excludes "Other" and the second the one that excludes "Knowledge".
+The composition observed for Paris is shown as a red cross.
+
+```{r}
+#| fig-show: "hold"
+#| message: false
+opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
+plot.acomp(paris_pcseq1[,-4])
+plot.acomp(paris_pcseq1["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+
+plot.acomp(paris_pcseq1[,-1])
+plot.acomp(paris_pcseq1["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+
+dev.copy(pdf, here("out/figures/","Xe_change_ternary.pdf"), width = 7, height = 3)
+dev.off()
+par(opar)
+```
+Both graphics above make clear that the ratios between all components except the first stay constant.
+This also explains why the path in the left ternary plot appears linear in euclidean sense.
+The same changes can be visualized in a stacked bar-plot, where the ratio of bar heights for the remains constant except when "Knowlege" is involved.
+Here we only show changes for the steps defined by $h = -20,...,20$.
+
+```{r}
 names(paris_pcseq1) <- colnames(PROFCAT)
 window <- as.character(seq(-20,20,by = 1))
 
@@ -477,28 +481,9 @@ dev.copy(pdf, here("out/figures","Xe_change_barplot.pdf"))
 dev.off()
 ```
 
-This is a special direction that leaves the ratios between all other components constant.
-
-```{r}
-#| fig-show: "hold"
-opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
-plot.acomp(paris_pcseq1[,-4])
-plot.acomp(paris_pcseq1["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
-# plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
-
-
-plot.acomp(paris_pcseq1[,-1])
-plot.acomp(paris_pcseq1["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
-# plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
-
-dev.copy(pdf, here("out/figures/","Xe_change_ternary.pdf"),
-         width = 7,
-         height = 3)
-dev.off()
-par(opar)
-```
-
-The changes appear linear in real space.
+Another way to look at the changing composition is to present the changes to all components as a function of the share of "Knowlege".
+In this graphic we additionally display the empirical distribution of the share of "Knowlege" over all municipalities.
+The vertical line intersects the other at the observed composition for Paris, showing that Paris is an outlier in the "Knowlege" dimension.
 
 ```{r}
 paris_pcseq1_gg <- data.frame(paris_pcseq1)
@@ -542,26 +527,18 @@ ggsave(here("out/figures/Xe_change_scatter.pdf"), height = 6, width = 6)
 ```
 
 
-### Changing in direction of the origin
-
-An alternative linear change is the direction that connects the composition of Paris with the origin, that is the balanced composition.
+## Changing in direction of the origin
 
 ```{r}
 paris_pcseq2 <- CoDa_path(
   comp_direc = paris$PROFCAT,
   comp_from = paris$PROFCAT,
   add_opposite = TRUE,
-  step_size = attr(paris_pcseq1,"step_size"))
-
-names(paris_pcseq2) <- colnames(PROFCAT)
-window <- as.character(seq(-60,60,by = 4))
-
-barplot(acomp(paris_pcseq2[window,,drop=FALSE]))
-dev.copy(pdf, here("out/figures/","Xu_change_barplot.pdf"))
-dev.off()
+  step_size = attr(paris_pcseq1,"step_size")) # take the same step size as before
 ```
 
-Here the paths in the simplex look more complex.
+An alternative direction is the one that points from the observed point for Paris to the origin of the simplex.
+The two ternary diagrams below show a path generated along this direction, where the red cross is the empirical composition for Paris and the blue star the origin.
 
 ```{r}
 #| fig-show: "hold"
@@ -582,11 +559,24 @@ dev.off()
 par(opar)
 ```
 
-Here we have non-linear changes in the euclidean sense.
-We see that the lines cross in the origin and at the position of pairs their values equal as before.
+The simplex-linear path generated by this direction looks more complex because it is non-linear in euclidean sense.
+For this path we also the ratios of the other components are no-longer constant and the changes are generally also not monotonic.
+This becomes evident when looking the shares of "Other" and "Retired" that peak close to the center of our variation and decline towards both edges.
+
 
 ```{r}
+names(paris_pcseq2) <- colnames(PROFCAT)
+window <- as.character(seq(-60,60,by = 4))
 
+barplot(acomp(paris_pcseq2[window,,drop=FALSE]))
+dev.copy(pdf, here("out/figures/","Xu_change_barplot.pdf"))
+dev.off()
+```
+
+When looking at the functional representation of this linear path we clearly see that the shares for each professional category cross at the origin of the 4-dimensional simplex.
+The intersection with the black line is again the empirical composition of Paris.
+
+```{r}
 paris_pcseq2_gg <- data.frame(paris_pcseq2)
 colnames(paris_pcseq2_gg) <- paste0("PC", 1:4)
 ggplot(paris_pcseq2_gg) +
@@ -629,18 +619,70 @@ ggsave(here("out/figures/Xu_change_scatter.pdf"), height = 6, width = 6)
 ```
 
 
-### Effects of these changes on the predicted shares
+# Y-scalar model interpretations
+
+
+In this section we look at a model that explains a transformation of the share of "non votes", which we treat as a real variables.
+
 
 ```{r}
+mun2model <- data.frame(
+  ID_MUN = mun_elec2census$ID_MUN,
+  REGISTERED = rowSums(as.matrix(VOTE_IMP)),
+  REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
+mun2model[["VOTE"]] <- as.matrix(VOTE_IMP)/mun2model$REGISTERED
+mun2model[["PROFCAT"]] <- as.matrix(PROFCAT_IMP)/rowSums(PROFCAT_IMP)
+
+logit <- function(p) log(p/(p+1))
+NV_model <- lm(
+  logit(VOTE[,6]) ~  ilr(PROFCAT) + log(REGISTERED),
+  data = mun2model,
+  weights = REGISTERED)
+summary(NV_model)
+```
+## Interpreting the impact of scalar X
+
+Constant marginal effects.
+
+## Interpreting the impact of compositional X
+
+Constant semi-elasticities.
+
+### Semi-elasticites
+
+In this model the clr transformed coefficient correspond directly to the semi-elasticity of the shares.
+
+```{r}
+#| warning: false
+clr_confint <- CoDaImpact:::confint.clr(NV_model, "ilr(PROFCAT)")
+
+ggplot(clr_confint) +
+  theme_bw() +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(x=X, xend=X, y=0, yend=EST, col = X)) +
+  geom_point(aes(x=X, y = EST, col = X)) +
+  geom_point(aes(x=X, y = Q025, col = X), pch = "[", stroke = 3) +
+  geom_point(aes(x=X, y = Q975, col = X), pch = "]", stroke = 3) +
+  labs(y = "semi-elasticities values & confidence intervals", x = NULL) +
+  theme(legend.position = "none")
+
+ggsave(here("out/figures", "yscalar_elasticity_profcat.pdf"), height = 2, width = 7)
 ```
 
+
+### Variation scenario
+
+We can now take the two sce
 
 
 ### Dependence profiles for the whole dataset
 
 
 
-# Model of the full compostion of votes
+# Y-compositional model interpretations
+
+Here we look at the case of a Y-compositional model that explains the full composition of votes.
 
 ```{r}
 VOTE_model <- lm(
@@ -649,17 +691,76 @@ VOTE_model <- lm(
 summary(VOTE_model)
 ```
 
+## Interpreting the impact of scalar X
 
-## Coefficients  and Elasticities
+
+### Coefficients and Elasticities
+
+The clr coefficients correspond to a difference from a mean elasticity.
 
 ```{r}
 #| warning: false
+flevels <- c("Mean elasticity", rev(rename_elec))
+clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "log(REGISTERED)")
+clr_confint$Y <- factor(rename_elec[clr_confint$Y], flevels)
+clr_confintB <- clr_confint[1,]
+clr_confintB$Y <- factor("Mean elasticity", levels = flevels)
+clr_confintB[,3:6] <- NA
 
-clr_coefs <- (ilrBase(D = 4)) %*% as.matrix(ilr2clr(VOTE_model$coefficients[2:4,]))
+ggplot(rbind(clr_confint,clr_confintB)) +
+  theme_bw() +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(x=Y, xend=Y, y=0, yend=EST, col = Y)) +
+  geom_point(aes(x=Y, y = EST, col = Y)) +
+  geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
+  geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
+  geom_boxplot(aes(y = EST, x = Y),data = data.frame(
+    EST = clr_confint$EST,
+    X = clr_confintB$Y,
+    Y = "Mean elasticity")) +
+  labs(y = "clr parameter values & confidence intervals\ndisribution of mean elasitcity", x = NULL) +
+  theme(legend.position = "none")
+
+ggsave(here("out/figures", "clr_b_profcat.pdf"), height = 2.5, width = 7)
+```
+
+
+We can use them to construct differences between the elasticities of two components of the dependent shares with respect to the same variable.
+
+```{r}
+#| warning: false
+clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "log(REGISTERED)",y_ref = 1)
+clr_confint$Y <- factor(rename_elec[clr_confint$Y], flevels)
+clr_confintB <- clr_confint[1,]
+clr_confintB[,3:6] <- NA
+
+ggplot(rbind(clr_confint,clr_confintB)) +
+  theme_bw() +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(x=Y, xend=Y, y=0, yend=DIFF, col = Y)) +
+  geom_point(aes(x=Y, y = DIFF, col = Y)) +
+  geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
+  geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
+  labs(y = "semi-elasticity differences & confidence intervals\n(reference is the share of Macron)", x = NULL) +
+  theme(legend.position = "none")
+
+ggsave(here("out/figures", "SE_diff_profcat.pdf"), height = 2, width = 7)
+```
+
+
+
+## Interpreting the impact of a X-compositional variable
+
+For X-compositional variables the clr coefficients also correspond to differences in mean elasticities, where these means are computed for each component of $X$ over all dependent shares.
+
+```{r}
+#| warning: false
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)")
-clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = c("Mean elasticity", rev(rename_elec)))
+clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = flevels)
 clr_confint_all <- clr_confint
-clr_confint_all$Y <- factor("Mean elasticity", levels(clr_confint_all$Y))
+clr_confint_all$Y <- factor("Mean elasticity", flevels)
 clr_confint_all$SD <- clr_confint_all$EST
 clr_confint_all$EST <- NA
 clr_confint_all$Q025 <- NA
@@ -682,7 +783,27 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
   labs(y = "clr parameter values & confidence intervals\ndisribution of mean elasitcity", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clrB_profcat.pdf"), height = 4, width = 7)
+ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
+```
+
+
+```{r}
+#| warning: false
+clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)",y_ref = 1)
+clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = flevels)
+ggplot(clr_confint) +
+  theme_bw() +
+  coord_flip() +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(x=Y, xend=Y, y=0, yend=DIFF, col = Y)) +
+  geom_point(aes(x=Y, y = DIFF, col = Y)) +
+  geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
+  geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
+  facet_wrap("X") +
+  labs(y = "elasticity differnces & confidence intervals\n(reference is the share of Macron)", x = NULL) +
+  theme(legend.position = "none")
+
+ggsave(here("out/figures", "E_diff_profcat.pdf"), height = 3.5, width = 7)
 ```
 
 
