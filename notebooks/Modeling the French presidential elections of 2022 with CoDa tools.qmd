@@ -29,7 +29,7 @@ dir.create(here::here("out","figures"),showWarnings = FALSE,recursive = TRUE)
 ```{r setup}
 #| warning: false
 #| message: false
-
+library("colorspace")
 library("CoDaImpact")
 library("compositions")
 library("data.table")
@@ -191,9 +191,11 @@ VOTE <- cbind(
   RIGHT = as.integer(rowSums(mun_elec2census[,..right_bloc])),
   NON_VOTE = as.integer(rowSums(mun_elec2census[,c("ABSTENTIONS", "INVALID","BLANK"),])))
 
+colnames(VOTE) <- rename_elec[colnames(VOTE)]
+
 vote_names <- rename_elec[colnames(VOTE)]
 zPatterns(
-  `names<-`(VOTE,vote_names),
+  VOTE,
   bar.labels = TRUE,
   label="0")
 ```
@@ -207,6 +209,7 @@ Here we impute data in `r zv` cases with `r zv*ncol(VOTE)` additional "inscripti
 ```{r}
 is_zero_row <- 0 != rowSums(VOTE == 0) 
 VOTE_IMP <- VOTE + is_zero_row
+
 cbind(
   sum(is_zero_row),
   sum(is_zero_row) * ncol(VOTE),
@@ -246,20 +249,19 @@ simplex_isodensity <- function(
 }
 
 opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
-simplex_isodensity(acomp(VOTE_IMP[,1:3]), labels = c("Macron", "Le Pen", "Mélenchon"))
+simplex_isodensity(acomp(VOTE_IMP[,1:3]))
 title(sub = "Imputed", outer = FALSE)
-simplex_isodensity(acomp(VOTE[,1:3]), labels = c("Macron", "Le Pen", "Mélenchon"))
+simplex_isodensity(acomp(VOTE[,1:3]))
 title(sub = "Original")
 par(opar)
 ```
 
 ```{r}
 #| fig-show: "hold"
-
 opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
-simplex_isodensity(acomp(VOTE_IMP[,-(1:3)]), labels = c("Left", "Right", "No vote"))
+simplex_isodensity(acomp(VOTE_IMP[,-(1:3)]))
 title(sub = "Imputed", outer = FALSE)
-simplex_isodensity(acomp(VOTE[,-(1:3)]), labels = c("Left", "Right", "No vote"))
+simplex_isodensity(acomp(VOTE[,-(1:3)]))
 title(sub = "Original")
 par(opar)
 ```
@@ -372,8 +374,9 @@ The scatter plot below shows that that the share of "non votes" is directly impa
 Additionally, its volatility seems to decrease with the size of the municipality in terms number if voters.
 
 ```{r}
-ggplot(mun2explore[REGISTERED < 300000,], aes(x = sqrt(REGISTERED), y = NON_VOTE/REGISTERED)) +
-  # geom_boxplot(aes(x = REGISTERED_BINS, y = ABSTENTIONS/REGISTERED)) +
+#| warning: false
+#| message: false
+ggplot(mun2explore[REGISTERED < 300000,], aes(x = sqrt(REGISTERED), y = `No vote`/REGISTERED)) +
   geom_point() +
   geom_smooth() +
   theme_bw() +
@@ -396,7 +399,6 @@ mun2explore_long <-
        measure.vars = colnames(VOTE))
 
 mun2explore_long[,value_rel := value/sum(value), by = "ID_MUN"]
-mun2explore_long[,variable:=rename_elec[as.character(variable)]]
 mun2explore_long[,variable:=factor(variable, levels = rename_elec)]
 ggplot(mun2explore_long, aes(x = REGISTERED_BINS, y = value_rel)) +
   geom_boxplot(outlier.size = .1) +
@@ -410,7 +412,7 @@ ggsave(here("out/figures", "vote6_boxplots.pdf"), width = 7, height = 6)
 ```
 
 
-And for the PC variables as well.
+For the profession categories we have the same pattern.
 
 ```{r}
 #| fig-show: hold
@@ -459,17 +461,18 @@ paris$PROFCAT
 In the following two subsections take this point of departure and add a sequence of linear increments, where linearity is understood with respect to the geometry of the simplex.
 It should be evident that a linear increment of a multivariate vector is defined by a direction (which we normalize to unit length) and a step size.
 
-## Changing in direction of first summit
+## Changing in direction of first vertex
 
 ```{r}
-paris_pcseq1 <- CoDa_seq(
+paris_pcseq1 <- CoDa_path(
+  comp_direc = c(2,1,1,1),
   comp_from = paris$PROFCAT,
-  comp_to = c(1e10,1,1,1)*as.numeric(paris$PROFCAT),
-  add_opposite = TRUE)
+  add_opposite = TRUE,
+  step_size = .1) # take the same step size as before
 ```
 
-Here we consider the direction that points from the original composition to directly to the first summit of the simplex.
-For our example the first summit identifies the share of "Knowledge" workers.
+Here we consider the direction that points from the original composition to directly to the first vertex of the simplex.
+For our example the first vertex identifies the share of "Knowledge" workers.
 Moving along this direction has the special property that the subcomposition that excludes the first element remains constant after closure.
 This becomes evident when looking at the two ternary diagrams below, where the first shows the subcomposition that excludes "Other" and the second the one that excludes "Knowledge".
 The composition observed for Paris is shown as a red cross.
@@ -491,12 +494,12 @@ par(opar)
 Both graphics above make clear that the ratios between all components except the first stay constant.
 This also explains why the path in the left ternary plot appears linear in euclidean sense.
 The same changes can be visualized in a stacked bar-plot, where the ratio of bar heights for the remains constant except when "Knowlege" is involved.
-Here we only show changes for the steps defined by $h = -20,...,20$.
+Here we only show changes for the steps defined by $h = -50,...,50$.
 
 ```{r}
 #| fig-show: hold
 names(paris_pcseq1) <- colnames(PROFCAT)
-window <- as.character(seq(-20,20,by = 1))
+window <- as.character(seq(-40,40,by = 2))
 barplot(acomp(paris_pcseq1[window,,drop=FALSE]))
 save_baseplot(pdf, here("out/figures","Xe_change_barplot.pdf"))
 ```
@@ -547,7 +550,6 @@ ggplot(paris_pcseq1_gg) +
 ggsave(here("out/figures/Xe_change_scatter.pdf"), height = 6, width = 6)
 ```
 
-
 ## Changing in direction of the origin
 
 ```{r}
@@ -583,8 +585,7 @@ This becomes evident when looking the shares of "Other" and "Retired" that peak 
 
 ```{r}
 names(paris_pcseq2) <- colnames(PROFCAT)
-window <- as.character(seq(-60,60,by = 4))
-
+window <- as.character(seq(-40,40,by = 2))
 barplot(acomp(paris_pcseq2[window,,drop=FALSE]))
 save_baseplot(pdf, here("out/figures/","Xu_change_barplot.pdf"))
 ```
@@ -634,7 +635,6 @@ ggplot(paris_pcseq2_gg) +
 
 ggsave(here("out/figures/Xu_change_scatter.pdf"), height = 6, width = 6)
 ```
-
 
 # Y-scalar model interpretations
 
@@ -691,6 +691,7 @@ In the hypothetical scenario where Paris has equal population in each profession
 
 
 ```{r}
+#| fig-show: hold
 #| warning: false
 inv_logit <- function(x) 1/(1 + exp(-x))
 paris_pred1 <- paris[rep(1,nrow(paris_pcseq1)),]
@@ -721,23 +722,31 @@ paris_pred2_gg <- melt(
 
 paris_pred_gg <- rbind(
   cbind("DIR" = "Direction with vertex", paris_pred1_gg),
-  cbind("DIR" = "Direction with origin", paris_pred2_gg))
+  cbind("DIR" = "General direction", paris_pred2_gg))
+paris_pred_gg[,variable := str_remove(variable,"PROFCAT.")]
 
 hline <- data.frame(
   INT = c(paris_pred1[c("0","0"), "PRED_TURNOUT"],paris_pred2["101", "PRED_TURNOUT"]),
-  DIR = c("Direction with vertex","Direction with origin", "Direction with origin"))
+  DIR = c("Direction with vertex","General direction", "General direction"),
+  LAB = c("(Paris)","(Paris)", "(origin)"),
+  YYY = c(.85),
+  JJJ = c(-.5,-.5,1.5))
 
 pclim <- c(.05, .95)
 ggplot(paris_pred_gg[between(F_SHARE, pclim[1], pclim[2]),]) +
   geom_vline(aes(xintercept = INT), data = hline) +
+  geom_text(aes(x = INT, y = YYY, label = LAB, vjust = JJJ), data = hline) +
   geom_line(aes(y = value, x = PRED_TURNOUT, col =variable, lty = variable)) +
-  scale_y_continuous(limits = pclim,labels = scales::percent) +
+  scale_y_continuous(breaks = seq(0,10)/10,labels = scales::percent) +
   scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL)) +
+  coord_fixed() +
   coord_flip() +
   theme_bw() +
   labs(y = "share in professional category", x = "predicted turnout",
-       col = "professional category", lty = "professional category") +
-  facet_wrap("DIR")
+       col = "professional\ncategory", lty = "professional\ncategory") +
+  facet_wrap("DIR", nrow = 2, scales = "free_x")
+
+ggsave(here("out/figures/x_compo_variation_scatter.pdf"), height = 5, width = 7)
 ```
 
 # Y-compositional model interpretations
@@ -757,7 +766,6 @@ summary(VOTE_model)
 ### Finite increments
 
 
-
 ### Semi-elasticities diffrence
 
 The clr coefficients correspond to a difference from a mean elasticity.
@@ -767,10 +775,15 @@ The clr coefficients correspond to a difference from a mean elasticity.
 #| warning: false
 flevels <- c("Mean elasticity", rev(rename_elec))
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "log(REGISTERED)")
-clr_confint$Y <- factor(rename_elec[clr_confint$Y], flevels)
+clr_confint$Y <- factor(clr_confint$Y, flevels)
 clr_confintB <- clr_confint[1,]
 clr_confintB$Y <- factor("Mean elasticity", levels = flevels)
 clr_confintB[,3:6] <- NA
+trSry <- CoDaImpact:::transformationSummary(VOTE_model)
+clr_T <- Reduce("rbind", trSry$COEF_CLR[-1])
+ME <- as(ilrInv(VOTE_model$fitted.values),"matrix") %*% t(clr_T[-1,])
+ME <- melt(data.table(ME), variable.name = "X", value.name = "EST")
+ME[,Y := factor("Mean elasticity", levels = flevels)]
 
 ggplot(rbind(clr_confint,clr_confintB)) +
   theme_bw() +
@@ -780,11 +793,8 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
-  geom_boxplot(aes(y = EST, x = Y),data = data.frame(
-    EST = clr_confint$EST,
-    X = clr_confintB$Y,
-    Y = "Mean elasticity")) +
-  labs(y = "clr parameter values & confidence intervals\ndisribution of mean elasitcity", x = NULL) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X=="log(REGISTERED)",]) +
+  labs(y = "clr parameter values & confidence intervals\ndistribution of mean elasticity", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "clr_b_profcat.pdf"), height = 2.5, width = 7)
@@ -797,7 +807,7 @@ We can use them to construct differences between the elasticities of two compone
 #| fig-show: hold
 #| warning: false
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "log(REGISTERED)",y_ref = 1)
-clr_confint$Y <- factor(rename_elec[clr_confint$Y], flevels)
+clr_confint$Y <- factor(clr_confint$Y, flevels)
 clr_confintB <- clr_confint[1,]
 clr_confintB[,3:6] <- NA
 
@@ -822,6 +832,7 @@ Even for the extreme changes such as a tenfold increase of the population or red
 When Paris is shrunk to the size of a village with $1000$ registered voters we see considerable differences.
 
 ```{r}
+#| fig-show: hold
 paris_size_scenario <- paris[rep(1,101),]
 paris_size_scenario$REGISTERED <- paris_size_scenario$REGISTERED * exp(seq(-log(1000),log(10),length.out = 101))
 paris_size_scenario$VOTE <- as(CoDaImpact:::predict.lmSimplex(VOTE_model, newdata = paris_size_scenario), "matrix")
@@ -830,13 +841,20 @@ colnames(paris_size_scenario$VOTE) <- colnames(VOTE)
 paris_size_scenario_gg <- melt(
   data = data.table(paris_size_scenario),
   id.vars = "REGISTERED",
-  measure.vars = paste0("VOTE.",colnames(VOTE)))
+  measure.vars = make.names(paste0("VOTE.",colnames(VOTE))))
 
+
+unmake_votenames <- structure(colnames(VOTE), names = make.names(paste0("VOTE.",colnames(VOTE))))
+paris_size_scenario_gg[,variable := factor(unmake_votenames[variable],unmake_votenames)]
 ggplot(paris_size_scenario_gg) +
   geom_vline(xintercept = paris$REGISTERED) +
-  geom_line(aes(x = REGISTERED, y = value, col = variable)) +
+  geom_line(aes(x = REGISTERED, y = value, col = variable, lty = variable)) +
   scale_x_continuous(trans = "log10") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "vote share", x = "number of registered voters", col = "candidate", lty = "candidate") +
   theme_bw()
+
+ggsave(here("out/figures","y_compo_variation_scatter.pdf"), height = 5, width = 7)
 ```
 
 
@@ -853,7 +871,7 @@ For X-compositional variables the clr coefficients also correspond to difference
 #| fig-show: hold
 #| warning: false
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)")
-clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = flevels)
+clr_confint$Y <- factor(clr_confint$Y,levels = flevels)
 clr_confint_all <- clr_confint
 clr_confint_all$Y <- factor("Mean elasticity", flevels)
 clr_confint_all$SD <- clr_confint_all$EST
@@ -870,12 +888,9 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = Q025, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = Q975, col = Y), pch = "]", stroke = 3) +
-  geom_boxplot(aes(y = EST, x = Y),data = data.frame(
-    EST = clr_confint_all$SD,
-    X = clr_confint_all$X,
-    Y = "Mean elasticity")) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X!="log(REGISTERED)"]) +
   facet_wrap("X") +
-  labs(y = "clr parameter values & confidence intervals\ndisribution of mean elasitcity", x = NULL) +
+  labs(y = "clr parameter values & confidence intervals\ndistribution of mean elasticity", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
@@ -886,7 +901,7 @@ ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
 #| fig-show: hold
 #| warning: false
 clr_confint <- CoDaImpact:::confint.clr(VOTE_model, "ilr(PROFCAT)",y_ref = 1)
-clr_confint$Y <- factor(rename_elec[clr_confint$Y],levels = flevels)
+clr_confint$Y <- factor(clr_confint$Y,levels = flevels)
 ggplot(clr_confint) +
   theme_bw() +
   coord_flip() +
@@ -911,42 +926,84 @@ Here we show the changes in the explanatory composition on top of the changes in
 ```{r}
 paris_pred1$VOTE <- as(CoDaImpact:::predict.lmSimplex(VOTE_model, newdata = paris_pred1),"matrix")
 paris_pred2$VOTE <- as(CoDaImpact:::predict.lmSimplex(VOTE_model, newdata = paris_pred2),"matrix")
+unmake_pc_vote_names <- c(
+  structure(paste0("(PC) ", colnames(PROFCAT)), names = paste0("PROFCAT.", colnames(PROFCAT))),
+  structure(paste0("(Vote) ", unmake_votenames), names = names(unmake_votenames)))
 
 paris_pred1_gg <- melt(
   data = data.table(paris_pred1),
   id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
-  measure.vars = c(paste0("PROFCAT.", colnames(PROFCAT)), paste0("VOTE.", colnames(VOTE))))
+  measure.vars = names(unmake_pc_vote_names))
 
 paris_pred2_gg <- melt(
   data = data.table(paris_pred2),
   id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
-  measure.vars = c(paste0("PROFCAT.", colnames(PROFCAT)), paste0("VOTE.", colnames(VOTE))))
+  measure.vars = names(unmake_pc_vote_names))
 
 paris_pred_gg <- rbind(
-  cbind("DIR" = "Direction with vertex", paris_pred1_gg),
-  cbind("DIR" = "Direction with origin", paris_pred2_gg))
+  cbind("DIR" = "Vertex as direction", paris_pred1_gg),
+  cbind("DIR" = "General direction", paris_pred2_gg))
 
 paris_pred_gg[,COMPO := as.character(variable)]
-paris_pred_gg[,SAHRE_XY := str_remove(COMPO,"VOTE.|PROFCAT.")]
+paris_pred_gg[,SAHRE_XY := factor(unmake_pc_vote_names[COMPO], unmake_pc_vote_names)]
 paris_pred_gg[,COMPO := fcase(grepl("^VOTE.",variable), "Changes in Y",
                               grepl("^PROFCAT.",variable), "Changes in X")]
 
 
 hline <- data.frame(
   INT = c(paris$PROFCAT[c(1,1), "Knowledge"],.25),
-  DIR = c("Direction with vertex","Direction with origin", "Direction with origin"))
+  DIR = c("Vertex as direction","General direction", "General direction"))
 
 ggplot(paris_pred_gg[between(F_SHARE, pclim[1], pclim[2]),]) +
   geom_vline(aes(xintercept = INT), data = hline) +
-  geom_line(aes(y = value, x = F_SHARE, col =variable, lty = variable)) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_x_continuous(labels = scales::percent) +
+  geom_line(aes(y = value, x = F_SHARE, col =SAHRE_XY, lty = SAHRE_XY)) +
+  scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
+  scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   theme_bw() +
-  labs(y = "share of votes (bottom) or professional category (top)", x = "share of professional category Knowlege",
+  labs(y = "predicted share of votes (bottom) or professional category (top)", x = "share of professional category Knowlege",
        col = "professional category\n(first four)\n\nvote shares\n(five to ten)",
        lty = "professional category\n(first four)\n\nvote shares\n(five to ten)") +
-  facet_grid(rows = vars(COMPO), cols = vars(DIR), scales = "free")
+  facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
 
+ggsave(here("out/figures", "yx_compo_variation_scatter.pdf"), height = 5.5, width = 7)
+```
+
+
+Focusing on the first three components of each for the two compositions the same graphic can be shown in a matrix of ternary diagrams.
+
+
+```{r}
+#| fig-show: hold
+opar <- par(mfrow = c(2,2), mai = c(.1,0,.2,0))
+filter1 <- paris_pred1$H_SEQ[between(paris_pred1$F_SHARE, pclim[1], pclim[2])]
+filter1 <- max(as.numeric(filter1))
+filter1 <- intersect(paris_pred1$H_SEQ, seq(-filter1,filter1))
+colors1 <- diverging_hcl(length(filter1),palette = "Blue-Red-3", rev = T)
+
+
+filter2 <- paris_pred2$H_SEQ[between(paris_pred2$F_SHARE, pclim[1], pclim[2])]
+filter2 <- min(as.numeric(filter2))
+filter2 <- intersect(paris_pred2$H_SEQ, seq(-filter2,filter2))
+colors2 <- diverging_hcl(length(filter2),palette = "Blue-Red-3", rev = T)
+
+plot(acomp(paris_pred1$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
+title("Change X (direction vertex)")
+plot(acomp(paris_pred2$PROFCAT[filter2,1:3]),  col = colors1, pch = 19)
+title("Change X (general direction)")
+plot(acomp(paris_pred1$VOTE[filter1,1:3]),  col = colors1, pch = 19)
+plot(acomp(paris_pred2$VOTE[filter2,1:3]),  col = colors1, pch = 19)
+par(opar)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_with_title.pdf"), height = 5.5, width = 7)
+```
+
+```{r include=TRUE}
+opar <- par(mfrow = c(2,2), mai = c(0.1,0,0,0))
+plot(acomp(paris_pred1$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
+plot(acomp(paris_pred2$PROFCAT[filter2,1:3]),  col = colors1, pch = 19)
+plot(acomp(paris_pred1$VOTE[filter1,1:3]),  col = colors1, pch = 19)
+plot(acomp(paris_pred2$VOTE[filter2,1:3]),  col = colors1, pch = 19)
+par(opar)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary.pdf"), height = 5.5, width = 7)
 ```
 
 
