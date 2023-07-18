@@ -48,6 +48,21 @@ save_baseplot <- function(device, ..., which){
     invisible(TRUE)
   })
 }
+format_VarTab <- function(VT, digits = 4) {
+  VT <- t(VT)
+  VT <- as.data.frame(round(VT, digits))
+  
+  v <- "Variation in units"
+  if (!is.null( VT[[v]])) VT[[v]] <- round(VT[[v]], max(digits - 2, 0))
+  
+  v <- "Variation in %"
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(VT[[v]], " %")
+  
+  v <- "Variation in % points"
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(VT[[v]], " %")
+  t(VT)
+}
+
 
 options(knitr.kable.NA = '',
         scipen = 9,
@@ -495,7 +510,7 @@ par(opar)
 ```
 Both graphics above make clear that the ratios between all components except the first stay constant.
 This also explains why the path in the left ternary plot appears linear in euclidean sense.
-The same changes can be visualized in a stacked bar-plot, where the ratio of bar heights for the remains constant except when "Knowlege" is involved.
+The same changes can be visualized in a stacked bar-plot, where the ratio of bar heights for the remains constant except when "Upper" is involved.
 Here we only show changes for the steps defined by $h = -50,...,50$.
 
 ```{r}
@@ -506,9 +521,9 @@ barplot(acomp(paris_pcseq1[window,,drop=FALSE]))
 save_baseplot(pdf, here("out/figures","Xe_change_barplot.pdf"))
 ```
 
-Another way to look at the changing composition is to present the changes to all components as a function of the share of "Knowlege".
-In this graphic we additionally display the empirical distribution of the share of "Knowlege" over all municipalities.
-The vertical line intersects the other at the observed composition for Paris, showing that Paris is an outlier in the "Knowlege" dimension.
+Another way to look at the changing composition is to present the changes to all components as a function of the share of "Upper".
+In this graphic we additionally display the empirical distribution of the share of "Upper" over all municipalities.
+The vertical line intersects the other at the observed composition for Paris, showing that Paris is an outlier in the "Upper" dimension.
 
 ```{r}
 #| fig-show: hold
@@ -704,9 +719,7 @@ ggplot(paris_pcseq2_gg) +
     col = "red",
     alpha = .25,
     width = .05) +
-  scale_x_continuous(
-    labels = scales::percent,
-    sec.axis = dup_axis(name= "Boxplot of % in professional category: Upper")) +
+  scale_x_continuous(labels = scales::percent) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
@@ -819,10 +832,12 @@ In this section we look at a model that explains a transformation of the turnout
 
 ```{r}
 logit <- function(p) log(p/(1-p))
+mun2model$TURNOUT <- 1 - mun2model$VOTE[,6]
 TURNOUT_model <- lmCoDa(
-  logit(1 - VOTE[,6]) ~  log(REGISTERED) + ilr(PROFCAT),
+  TURNOUT ~  log(REGISTERED) + ilr(PROFCAT),
   data = mun2model,
   weights = REGISTERED)
+
 summary(TURNOUT_model)
 ```
 
@@ -863,6 +878,31 @@ ggplot(clr_confint) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "yscalar_elasticity_profcat.pdf"), height = 2, width = 7)
+```
+
+
+### Variation Table
+
+The table below illustrates how the dependent variable logit(TURNOUT) would react to a change in the composition of the professional categories, where we focus on the municipality of Paris.
+
+```{r}
+paris_num <- which(mun2model$ID_MUN == paris_id)
+paris_varTab <- cbind(
+  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = 1, obs = paris_num),
+  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = dir_gen, inc_size = 1, obs = paris_num))[-5,]
+
+colnames(paris_varTab) <- c("Direction to vertex", "General direction")
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Impacts of change in PC on logit(TURNOUT)", digits = 4, booktabs = TRUE)
+```
+
+
+```{r}
+#| include: false
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Impacts of change in PC on logit(TURNOUT)", digits = 4, booktabs = TRUE,
+        format = "latex",label = "VarTab_TURNOUT_XeXu_change", linesep = "") |> 
+  save_kable(here("out/tables/VarTab_TURNOUT_XeXu_change.tex"))
 ```
 
 
@@ -910,8 +950,8 @@ paris_pred2_gg <- melt(
 paris_pred3 <- paris[rep(1,nrow(paris_pcseq3) + 1),]
 paris_pred3$PROFCAT <- rbind(as.matrix(paris_pcseq3),rep(.25,4)) # add the origin
 paris_pred3$VOTE <- NULL
-paris_pred3$PRED_TURNOUT_LOGIT <- predict(TURNOUT_model, newdata = paris_pred3) 
-paris_pred3$PRED_TURNOUT <- inv_logit(paris_pred3$PRED_TURNOUT_LOGIT)
+paris_pred3$PRED_TURNOUT <- predict(TURNOUT_model, newdata = paris_pred3) 
+paris_pred3$PRED_TURNOUT_LOGIT <- logit(paris_pred3$PRED_TURNOUT)# inv_logit(paris_pred3$PRED_TURNOUT_LOGIT)
 paris_pred3$H_SEQ <- row.names(paris_pred3) <- c(row.names(paris_pcseq3),"101")
 paris_pred3$F_SHARE <- paris_pred3$PROFCAT[,"Upper"]
 
@@ -948,7 +988,7 @@ ggplot(paris_pred_gg) +
   facet_wrap("DIR", ncol = 1, scales = "free_x")
 ```
 
-Focussing on the first two scenarios the graph becomes
+Focusing on the first two scenarios the graph becomes
 
 ```{r}
 #| warning: false
@@ -958,14 +998,44 @@ ggplot(paris_pred_gg[DIR != "Origin direction",]) +
   geom_line(aes(y = value, x = PRED_TURNOUT, col =variable, lty = variable)) +
   scale_y_continuous(breaks = seq(0,10)/10,labels = scales::percent) +
   scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL), limits = c(.5,.9)) +
-  coord_flip() +
   theme_bw() +
+  coord_flip() +
   labs(y = "share in professional category", x = "predicted turnout",
        col = "Professional\ncategory", lty = "Professional\ncategory") +
   facet_wrap("DIR", ncol = 1, scales = "free_x")
+```
+
+An alternative and maybe simpler way to show the same information is to look simultaneously at the changes of the depndents and independent variables as a function of $h$.
+
+```{r}
+paris_pred_gg2 <- copy(paris_pred_gg[DIR != "Origin direction",])
+paris_pred_gg2[, COMPO := "Change in X"]
+
+paris_pred_gg3 <- copy(paris_pred_gg2[variable == "Upper",])
+paris_pred_gg3[, COMPO := "Change in Y"]
+paris_pred_gg3[, variable := NA]
+paris_pred_gg3[,value := PRED_TURNOUT]
+
+paris_pred_ggX <- rbind(paris_pred_gg2, paris_pred_gg3)
+paris_pred_ggX[, COMPO := factor(COMPO, c("Change in Y", "Change in X"))]
+rm(paris_pred_gg2, paris_pred_gg3)
+
+ggplot(paris_pred_ggX) +
+  geom_vline(xintercept = 0) +
+  # geom_text(aes(x = INT, y = YYY, label = LAB, vjust = JJJ), data =  hline[1:2,]) +
+  geom_line(aes(y = value, x = as.integer(H_SEQ)/10, col =variable, lty = variable)) +
+  scale_y_continuous(breaks = seq(0,10)/10,labels = scales::percent) +
+  scale_colour_manual(values = scales::hue_pal()(4), na.value = "#000000", breaks = levels(paris_pred_ggX$variable))  + 
+  scale_linetype_manual(values = 1:4, na.value = 1, , breaks = levels(paris_pred_ggX$variable))  + 
+  # scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL), limits = c(.5,.9)) +
+  theme_bw() +
+  labs(y = "share in PC (lower) and predicted turnout (upper)", x = "value of h",
+       col = "Professional\ncategory", lty = "Professional\ncategory") +
+  facet_grid(COMPO ~ DIR, scales = "free")
 
 ggsave(here("out/figures/x_compo_variation_scatter.pdf"), height = 5, width = 7)
 ```
+
 
 
 # Y-compositional model interpretations
@@ -1090,8 +1160,19 @@ Here we use $\text{log(REGISTERED)} + .1$ which means that the change to the num
 ```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
 paris_varTab <- VariationTable(VOTE_model, "log(REGISTERED)",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
-kable(round(paris_varTab,4)) |> kable_classic()
+
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Increase of the electorate by 10%", digits = 4, booktabs = TRUE)
 ```
+
+
+```{r}
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Increase of the electorate by 10\\%", digits = 4, booktabs = TRUE,
+        format = "latex", label = "VarTab_VOTE_logREG_change", linesep = "") |> 
+  save_kable(here("out/tables/VarTab_VOTE_logREG_change.tex"))
+```
+
 
 It is easy to verify that the variations in % points and units compensate each other.
 
@@ -1230,13 +1311,24 @@ ggsave(here("out/figures", "E_diff_profcat.pdf"), height = 3.5, width = 7)
 
 ### Variation table
 
-Similar to the previous variation Table we  evaluate how the voting behavior reacts to a to a small change in the explantory composition.
+Similar to the previous variation Table we  evaluate how the voting behavior reacts to a to a small change in the explanatory composition.
 However, since this variable is multivariate we also have to specify the direction of change.
 For a change towards the vertex "Upper" we get the following:
 
 ```{r}
 paris_varTab <- VariationTable(VOTE_model, "PROFCAT", Xdir = "Upper",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
-kable(round(paris_varTab,4)) |> kable_classic()
+
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Change of (PC) in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE)
+```
+
+
+```{r}
+#| include: false
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Change of PC in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE,
+        format = "latex", label = "VarTab_VOTE_Xe_change", linesep = "") |> 
+  save_kable(here("out/tables/VarTab_VOTE_Xe_change.tex"))
 ```
 
 
@@ -1250,15 +1342,20 @@ paris_varTab <- VariationTable(
   inc_size = .1,
   obs = paris_num,
   Ytotal = mun2model$REGISTERED[paris_num])
-kable(paris_varTab ,caption = "Change in a general direction", digits = 4) |> 
-  kable_classic()
+
+format_VarTab(paris_varTab, 4) |> 
+  kable(caption = "Change of PC in a general direction", digits = 4, booktabs = TRUE)
+
 ```
 
 
 ```{r}
-#| include: true
-kable(paris_varTab ,caption = "Change in a general direction", digits = 4,format = "latex")  |> 
-  save_kable(file = here("out/tables/tab_Xu_change.tex"))
+#| include: false
+paris_varTab |>  
+  format_VarTab() |> 
+  kable(caption = "Change in a general direction", digits = 4, booktabs = TRUE ,
+      format = "latex", label = "VarTab_VOTE_Xu_change", linesep = "")  |> 
+  save_kable(paris_varTab, file = here("out/tables/VarTab_VOTE_Xu_change.tex"))
 ```
 
 
@@ -1266,6 +1363,7 @@ kable(paris_varTab ,caption = "Change in a general direction", digits = 4,format
 
 Turning to the changes induced by the variation of the socio-professional composition in Paris.
 Here we show the changes in the explanatory composition on top of the changes in the predicted shares.
+The graphic below displays the changes as a function of the category "Upper".
 
 ```{r}
 paris_pred1$VOTE <- as(predict(VOTE_model, space = "simplex", newdata = paris_pred1),"matrix")
@@ -1292,20 +1390,20 @@ paris_pred_gg[,COMPO := as.character(variable)]
 paris_pred_gg[,SAHRE_XY := factor(unmake_pc_vote_names[COMPO], unmake_pc_vote_names)]
 paris_pred_gg[,COMPO := fcase(grepl("^VOTE.",variable), "Changes in Y",
                               grepl("^PROFCAT.",variable), "Changes in X")]
-
+paris_pred_gg[,COMPO := factor(COMPO, levels = c("Changes in Y", "Changes in X"))]
 
 hline <- data.frame(
   INT = c(paris$PROFCAT[c(1,1), "Upper"],.25),
   DIR = c("Direction to vertex","General direction", "General direction"))
 
 pclim <- c(.05, .95)
-ggplot(paris_pred_gg[between(F_SHARE, pclim[1], pclim[2]),]) +
+ggplot(paris_pred_gg) +
   geom_vline(aes(xintercept = INT), data = hline[1:2,]) +
   geom_line(aes(y = value, x = F_SHARE, col =SAHRE_XY, lty = SAHRE_XY)) +
   scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   theme_bw() +
-  labs(y = "predicted share of votes (bottom) or professional category (top)", x = "share of professional category Knowlege",
+  labs(y = "predicted share of votes (bottom) or professional category (top)", x = "share of professional category Upper",
        col = "professional category\n(first four)\n\nvote shares\n(five to ten)",
        lty = "professional category\n(first four)\n\nvote shares\n(five to ten)") +
   facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
@@ -1313,6 +1411,25 @@ ggplot(paris_pred_gg[between(F_SHARE, pclim[1], pclim[2]),]) +
 ggsave(here("out/figures", "yx_compo_variation_scatter.pdf"), height = 5.5, width = 7)
 ```
 
+
+We can draw the same graphic as a function of the distance of $h$, which coorresponds in our case to the Aitchison distrance between $X(0)$ and $X(h)$.
+
+
+```{r}
+ggplot(paris_pred_gg[,]) +
+  geom_vline(aes(xintercept = B), data = cbind(hline[1:2,],B = 0)) +
+  geom_line(aes(y = value, x = as.integer(H_SEQ)/10, col =SAHRE_XY, lty = SAHRE_XY)) +
+  scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
+  # scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
+  theme_bw() +
+  labs(y = "predicted share of votes (bottom) or professional category (top)",
+       x = "value of h",
+       col = "professional category\n(first four)\n\nvote shares\n(five to ten)",
+       lty = "professional category\n(first four)\n\nvote shares\n(five to ten)") +
+  facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
+
+ggsave(here("out/figures", "yx_compo_variation_scatter_by_h.pdf"), height = 5.5, width = 7)
+```
 
 Focusing on the first three components of each for the two compositions the same graphic can be shown in a matrix of ternary diagrams.
 
@@ -1324,6 +1441,7 @@ filter1 <- paris_pred1$H_SEQ[between(paris_pred1$F_SHARE, pclim[1], pclim[2])]
 filter1 <- as.numeric(filter1)
 filter1 <- min(max(-filter1), max(filter1))
 filter1 <- intersect(paris_pred1$H_SEQ, seq(-filter1,filter1))
+filter1 <- as.character(seq(-25,25))
 colors1 <- diverging_hcl(length(filter1),palette = "Blue-Red-3", rev = T)
 
 
@@ -1334,23 +1452,25 @@ title("Change X (general direction)")
 plot(acomp(paris_pred1$VOTE[filter1,1:3]),  col = colors1, pch = 19)
 plot(acomp(paris_pred2$VOTE[filter1,1:3]),  col = colors1, pch = 19)
 par(opar)
-save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_with_title.pdf"), height = 5.5, width = 7)
 ```
 
 ```{r}
 #| include: false
-opar <- par(mfrow = c(2,2), mai = c(0.1,0,0,0))
+opar <- par(mfrow = c(1,2), mai = c(0,0.6,0,.6))
 plot(acomp(paris_pred1$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
-plot(acomp(paris_pred2$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
 plot(acomp(paris_pred1$VOTE[filter1,1:3]),  col = colors1, pch = 19)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xe.pdf"), height = 3, width = 7)
+
+opar <- par(mfrow = c(1,2), mai = c(0,0.6,0,.6))
+plot(acomp(paris_pred2$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
 plot(acomp(paris_pred2$VOTE[filter1,1:3]),  col = colors1, pch = 19)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xu.pdf"), height = 3, width = 7)
 par(opar)
-save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary.pdf"), height = 5.5, width = 7)
 ```
 
 
 
-# Acknowlegements {-}
+# AcUpperments {-}
 
 The example used to illustrate this work is taken from a Statistical Consulting project class of the Master in Data Science for Social Sciences of The Toulouse School of economics, in cooperation with he Market Research agency BVA.
 The project was a great experience and we want thank again all participants.
