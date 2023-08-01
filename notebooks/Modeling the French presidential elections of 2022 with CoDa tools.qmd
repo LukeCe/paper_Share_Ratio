@@ -48,21 +48,20 @@ save_baseplot <- function(device, ..., which){
     invisible(TRUE)
   })
 }
-format_VarTab <- function(VT, digits = 4) {
+format_VarTab <- function(VT, digits = 4, digitsU = max(digits - 2, 0), digitsP = digits,  digitsPP = digits) {
   VT <- t(VT)
   VT <- as.data.frame(round(VT, digits))
   
   v <- "Variation in units"
-  if (!is.null( VT[[v]])) VT[[v]] <- round(VT[[v]], max(digits - 2, 0))
+  if (!is.null( VT[[v]])) VT[[v]] <- round(VT[[v]], digitsU)
   
   v <- "Variation in %"
-  if (!is.null( VT[[v]])) VT[[v]] <- paste0(VT[[v]], " %")
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsP), " %")
   
   v <- "Variation in % points"
-  if (!is.null( VT[[v]])) VT[[v]] <- paste0(VT[[v]], " %")
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsPP), " %")
   t(VT)
 }
-
 
 options(knitr.kable.NA = '',
         scipen = 9,
@@ -102,7 +101,8 @@ skim(mun_elec2census)
 
 ## Compare losses due to preprocessing 
 
-
+We lose some of the registered voters in France because the census data only covers individuals living in mainland France.
+The overseas departments and voters living in a foreign country are not covered by our analysis.
 Let us compare the original voting data with the combined voting data to assess the losses and potential biases.
 
 
@@ -180,10 +180,10 @@ kable(cbind(elec_original, elec_combined)) |>
 
 ## Check for problems with zeros
 
-Since CoDa models do not handle zero proportions in either the dependent or independent compositional variables we have to treat the problem of zero before going to the modelling phase.
-Here we a combination of amalgamations and imputations which corresponds to merging several components and replacing zeros with small values.
-We do not claim any sociological validity for the grouping of candidates and professional categories
-While the grouping we propose is based our intuitive understanding a true study of electoral sociology should place much more thought in these actions.
+Since CoDa models do not handle zero proportions in the dependent and independent compositional variables we have to treat the problem of zero before we can estimate a the models.
+We will first use amalgamations, followed by an imputation where we replace the remaining zeros with small values.
+Th amalgamations consist in grouping multiple professional categories or political candidates into larger blocks.
+While the grouping we propose is based our intuitive understanding a case study of the French electoral sociology should certainly place more thought in these actions.
 
 ### In the vote data
 
@@ -218,8 +218,8 @@ zPatterns(
 
 `r zv <- sum(0 != rowSums(VOTE == 0))`
 The remaining zeros are imputed.
-Here take the simple road of adding 1 for to all lines with at least one zero.
-Here we impute data in `r zv` cases with `r zv*ncol(VOTE)` additional "inscriptions".
+Here we simply add one vote to all candidates (or blocks) in each municipality with at least one zero.
+For out `VOTE` composition we impute data in `r zv` municipalities which lead `r zv*ncol(VOTE)` additional registered voters.
 
 
 ```{r}
@@ -456,7 +456,8 @@ ggsave(here("out/figures", "profcat4_boxplots.pdf"), width = 7, height = 6)
 mun2model <- data.frame(
   ID_MUN = mun_elec2census$ID_MUN,
   REGISTERED = rowSums(as.matrix(VOTE_IMP)),
-  REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)))
+  REGISTERED_G = Reduce("*", lapply(VOTE_IMP, as.numeric)),
+  POP_DENSITY = mun_elec2census$POPULATION / mun_elec2census$AREA)
 mun2model[["VOTE"]] <- as.matrix(VOTE_IMP)/mun2model$REGISTERED
 mun2model[["PROFCAT"]] <- as.matrix(PROFCAT_IMP)/rowSums(PROFCAT_IMP)
 ```
@@ -831,10 +832,9 @@ In this section we look at a model that explains a transformation of the turnout
 
 
 ```{r}
-logit <- function(p) log(p/(1-p))
 mun2model$TURNOUT <- 1 - mun2model$VOTE[,6]
 TURNOUT_model <- lmCoDa(
-  TURNOUT ~  log(REGISTERED) + ilr(PROFCAT),
+  TURNOUT ~  log(POP_DENSITY) + ilr(PROFCAT) + 1,
   data = mun2model,
   weights = REGISTERED)
 
@@ -844,7 +844,15 @@ summary(TURNOUT_model)
 The analysis of variance is given by
 
 ```{r}
-anova(TURNOUT_model)
+aov <- anova(TURNOUT_model)
+aov$`Sum Sq` <- round(aov$`Sum Sq`, 2)
+aov$`Mean Sq` <- round(aov$`Mean Sq`, 2)
+aov$`F value` <- round(aov$`F value`, 2)
+
+kable(aov, caption = "Analysis of variance table for the X-compositional model") |> kable_classic()
+kable(aov, caption = "Analysis of variance table for the X-compositional model", label = "aov_TURNOUT",format = "latex", booktabs = TRUE) |> 
+  kable_styling(latex_options = "hold_position") |> 
+  save_kable(file = here("out/tables/aov_TURNOUT.tex"))
 ```
 
 
@@ -883,25 +891,33 @@ ggsave(here("out/figures", "yscalar_elasticity_profcat.pdf"), height = 2, width 
 
 ### Variation Table
 
-The table below illustrates how the dependent variable logit(TURNOUT) would react to a change in the composition of the professional categories, where we focus on the municipality of Paris.
+The table below illustrates how the dependent variable TURNOUT would react to a change in the composition of the professional categories, where we focus on the municipality of Paris.
 
 ```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
 paris_varTab <- cbind(
-  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = 1, obs = paris_num),
-  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = dir_gen, inc_size = 1, obs = paris_num))[-5,]
+  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = .1, obs = paris_num),
+  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = dir_gen, inc_size = .1, obs = paris_num))
+row.names(paris_varTab)[4] <- "Variation in % points"
+paris_varTab[4,] <- paris_varTab[5,] * 100
+paris_varTab <- paris_varTab[-5,]
 
+tab_atr <- VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = .1, obs = paris_num)
+tab_atr <- attributes(tab_atr)
 colnames(paris_varTab) <- c("Direction to vertex", "General direction")
-format_VarTab(paris_varTab, 4) |> 
-  kable(caption = "Impacts of change in PC on logit(TURNOUT)", digits = 4, booktabs = TRUE)
+format_VarTab(paris_varTab, 3,digitsP = 3, digitsPP =  3) |> 
+  kable(caption = "Variation of the turnout when changing  PC in different directions", digits = 4, booktabs = TRUE) |> 
+  add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2))) 
 ```
 
 
 ```{r}
 #| include: false
-format_VarTab(paris_varTab, 4) |> 
-  kable(caption = "Impacts of change in PC on logit(TURNOUT)", digits = 4, booktabs = TRUE,
+format_VarTab(paris_varTab, 3,digitsP = 2, digitsPP =  2) |> 
+  kable(caption = "Impacts of change in PC on the turnout", digits = 4, booktabs = TRUE,
         format = "latex",label = "VarTab_TURNOUT_XeXu_change", linesep = "") |> 
+  # add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2)))  |> 
+  kable_styling(latex_options = "hold_position") |> 
   save_kable(here("out/tables/VarTab_TURNOUT_XeXu_change.tex"))
 ```
 
@@ -916,34 +932,31 @@ In the hypothetical scenario where Paris has equal population in each profession
 ```{r}
 #| fig-show: hold
 #| warning: false
-inv_logit <- function(x) 1/(1 + exp(-x))
 
 # first scenario data
 paris_pred1 <- paris[rep(1,nrow(paris_pcseq1)),]
 paris_pred1$PROFCAT <- as.matrix(paris_pcseq1)
 paris_pred1$VOTE <- NULL
-paris_pred1$PRED_TURNOUT_LOGIT <- predict(TURNOUT_model, newdata = paris_pred1) 
-paris_pred1$PRED_TURNOUT <- inv_logit(paris_pred1$PRED_TURNOUT_LOGIT)
+paris_pred1$PRED_TURNOUT <- predict(TURNOUT_model, newdata = paris_pred1) 
 paris_pred1$H_SEQ <- row.names(paris_pred1) <- row.names(paris_pcseq1)
 paris_pred1$F_SHARE <- paris_pred1$PROFCAT[,"Upper"]
 
 paris_pred1_gg <- melt(
   data = data.table(paris_pred1),
-  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
+  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT"),
   measure.vars = paste0("PROFCAT.", colnames(PROFCAT)))
 
 # second scenario data
 paris_pred2 <- paris[rep(1,nrow(paris_pcseq2)),]
 paris_pred2$PROFCAT <- as.matrix(paris_pcseq2)
 paris_pred2$VOTE <- NULL
-paris_pred2$PRED_TURNOUT_LOGIT <- predict(TURNOUT_model, newdata = paris_pred2) 
-paris_pred2$PRED_TURNOUT <- inv_logit(paris_pred2$PRED_TURNOUT_LOGIT)
+paris_pred2$PRED_TURNOUT <- predict(TURNOUT_model, newdata = paris_pred2) 
 paris_pred2$H_SEQ <- row.names(paris_pred2) <- c(row.names(paris_pcseq2))
 paris_pred2$F_SHARE <- paris_pred2$PROFCAT[,"Upper"]
 
 paris_pred2_gg <- melt(
   data = data.table(paris_pred2),
-  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
+  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT"),
   measure.vars = paste0("PROFCAT.", colnames(PROFCAT)))
 
 # third scenario data
@@ -951,13 +964,12 @@ paris_pred3 <- paris[rep(1,nrow(paris_pcseq3) + 1),]
 paris_pred3$PROFCAT <- rbind(as.matrix(paris_pcseq3),rep(.25,4)) # add the origin
 paris_pred3$VOTE <- NULL
 paris_pred3$PRED_TURNOUT <- predict(TURNOUT_model, newdata = paris_pred3) 
-paris_pred3$PRED_TURNOUT_LOGIT <- logit(paris_pred3$PRED_TURNOUT)# inv_logit(paris_pred3$PRED_TURNOUT_LOGIT)
 paris_pred3$H_SEQ <- row.names(paris_pred3) <- c(row.names(paris_pcseq3),"101")
 paris_pred3$F_SHARE <- paris_pred3$PROFCAT[,"Upper"]
 
 paris_pred3_gg <- melt(
   data = data.table(paris_pred3),
-  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
+  id.vars = c("H_SEQ","F_SHARE", "PRED_TURNOUT"),
   measure.vars = paste0("PROFCAT.", colnames(PROFCAT)))
 
 
@@ -1018,18 +1030,19 @@ paris_pred_gg3[,value := PRED_TURNOUT]
 
 paris_pred_ggX <- rbind(paris_pred_gg2, paris_pred_gg3)
 paris_pred_ggX[, COMPO := factor(COMPO, c("Change in Y", "Change in X"))]
+paris_pred_ggX[,H_SEQ := as.integer(H_SEQ)]
 rm(paris_pred_gg2, paris_pred_gg3)
 
-ggplot(paris_pred_ggX) +
+ggplot(paris_pred_ggX[-30 <= H_SEQ & H_SEQ <= 30]) +
   geom_vline(xintercept = 0) +
   # geom_text(aes(x = INT, y = YYY, label = LAB, vjust = JJJ), data =  hline[1:2,]) +
-  geom_line(aes(y = value, x = as.integer(H_SEQ)/10, col =variable, lty = variable)) +
+  geom_line(aes(y = value, x = H_SEQ/10, col =variable, lty = variable)) +
   scale_y_continuous(breaks = seq(0,10)/10,labels = scales::percent) +
   scale_colour_manual(values = scales::hue_pal()(4), na.value = "#000000", breaks = levels(paris_pred_ggX$variable))  + 
   scale_linetype_manual(values = 1:4, na.value = 1, , breaks = levels(paris_pred_ggX$variable))  + 
   # scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL), limits = c(.5,.9)) +
   theme_bw() +
-  labs(y = "share in PC (lower) and predicted turnout (upper)", x = "value of h",
+  labs(y = "share in PC (bottom) and predicted turnout (top)", x = "value of h",
        col = "Professional\ncategory", lty = "Professional\ncategory") +
   facet_grid(COMPO ~ DIR, scales = "free")
 
@@ -1044,19 +1057,26 @@ Here we look at the case of a Y-compositional model that explains the full compo
 
 ```{r}
 VOTE_model <- lmCoDa(
-  ilr(VOTE) ~  log(REGISTERED) + ilr(PROFCAT),
+  ilr(VOTE) ~  log(POP_DENSITY) + ilr(PROFCAT),
   data = mun2model)
 summary(VOTE_model)
 ```
 
 
 ```{r}
-anova(VOTE_model)
+aov <- anova(VOTE_model)
+aov$`approx F` <- round(aov$`approx F`)
+aov$Pillai <- round(aov$Pillai, 3)
+
+kable(aov, caption = "Analysis of variance table for the y-compositional model") |> kable_classic()
+kable(aov, caption = "Analysis of variance table for the y-compositional model", label = "aov_VOTE", format = "latex", booktabs = TRUE) |> 
+  kable_styling(latex_options = "hold_position") |> 
+  save_kable(file = here("out/tables/aov_VOTE.tex"))
 ```
 
 
 
-## Interpreting the impact of scalar X
+## Interpreting the impact of a scalar X
 
 
 ### Semi-elasticities diffrence
@@ -1066,16 +1086,16 @@ The clr coefficients correspond to a difference from a mean elasticity.
 ```{r}
 #| fig-show: hold
 #| warning: false
-flevels <- c("Mean elasticity", rev(rename_elec))
-clr_confint <- confint(VOTE_model, "log(REGISTERED)")
+flevels <- c("-Mean semi elasticity", rev(rename_elec))
+clr_confint <- confint(VOTE_model, "log(POP_DENSITY)")
 clr_confint$Y <- factor(clr_confint$Y, flevels)
 clr_confintB <- clr_confint[1,]
-clr_confintB$Y <- factor("Mean elasticity", levels = flevels)
+clr_confintB$Y <- factor("-Mean semi elasticity", levels = flevels)
 clr_confintB[,3:6] <- NA
 clr_T <- coef(VOTE_model, "clr")
 ME <- as(fitted(VOTE_model, "simplex"),"matrix") %*% t(clr_T[-1,])
 ME <- melt(data.table(ME), variable.name = "X", value.name = "EST")
-ME[,Y := factor("Mean elasticity", levels = flevels)]
+ME[,Y := factor("-Mean semi elasticity", levels = flevels)]
 
 ggplot(rbind(clr_confint,clr_confintB)) +
   theme_bw() +
@@ -1085,11 +1105,11 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  geom_violin(aes(y = EST, x = Y),data = ME[X=="log(REGISTERED)",]) +
-  labs(y = "clr parameter values & confidence intervals\ndistribution of mean elasticity", x = NULL) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X=="log(POP_DENSITY)",]) +
+  labs(y = "clr parameter values & confidence intervals\ndistribution of negative mean semi elasticity", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clr_b_profcat_with_details.pdf"), height = 2.5, width = 7)
+ggsave(here("out/figures", "clr_b_popdens_with_details.pdf"), height = 2.5, width = 7)
 ```
 
 ```{r}
@@ -1102,11 +1122,11 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  geom_violin(aes(y = EST, x = Y),data = ME[X=="log(REGISTERED)",]) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X=="log(POP_DENSITY)",]) +
   labs(y = "clr parameter values", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clr_b_profcat.pdf"), height = 2.5, width = 7)
+ggsave(here("out/figures", "clr_b_popdens.pdf"), height = 2.5, width = 7)
 ```
 
 
@@ -1116,7 +1136,7 @@ We can use them to construct differences between the elasticities of two compone
 ```{r}
 #| fig-show: hold
 #| warning: false
-clr_confint <- confint(VOTE_model, "log(REGISTERED)",y_ref = 1)
+clr_confint <- confint(VOTE_model, "log(POP_DENSITY)",y_ref = 1)
 clr_confint$Y <- factor(clr_confint$Y, flevels)
 clr_confintB <- clr_confint[1,]
 clr_confintB[,3:6] <- NA
@@ -1132,7 +1152,7 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   labs(y = "semi-elasticity differences & confidence intervals\n(reference is the share of Macron)", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "SE_diff_profcat_with_details.pdf"), height = 2, width = 7)
+ggsave(here("out/figures", "SE_diff_popdens_with_details.pdf"), height = 2, width = 7)
 ```
 
 ```{r}
@@ -1148,29 +1168,30 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   labs(y = "semi-elasticity differences", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "SE_diff_profcat.pdf"), height = 2, width = 7)
+ggsave(here("out/figures", "SE_diff_popdens.pdf"), height = 2, width = 7)
 ```
 
 
 ### Variation table
 
 We can use Taylor approximations for to evaluate how the voting behavior reacts to a to a small change in the overall number of registered voters.
-Here we use $\text{log(REGISTERED)} + .1$ which means that the change to the number of registered voters grows by about 10%.
+Here we use $\text{log(POP_DENSITY)} + .1$ which means that population density increases by about 10%.
 
 ```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
-paris_varTab <- VariationTable(VOTE_model, "log(REGISTERED)",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
+paris_varTab <- VariationTable(VOTE_model, "log(POP_DENSITY)",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
 
-format_VarTab(paris_varTab, 4) |> 
-  kable(caption = "Increase of the electorate by 10%", digits = 4, booktabs = TRUE)
+format_VarTab(paris_varTab, 4, 0, 2, 2) |> 
+  kable(caption = "Increase of the population density by 10%", digits = 4, booktabs = TRUE)
 ```
 
 
 ```{r}
-format_VarTab(paris_varTab, 4) |> 
-  kable(caption = "Increase of the electorate by 10\\%", digits = 4, booktabs = TRUE,
-        format = "latex", label = "VarTab_VOTE_logREG_change", linesep = "") |> 
-  save_kable(here("out/tables/VarTab_VOTE_logREG_change.tex"))
+format_VarTab(paris_varTab, 4, 0, 2, 2) |> 
+  kable(caption = "Increase of the population density by 10\\%", digits = 4, booktabs = TRUE,
+        format = "latex", label = "VarTab_VOTE_logPDENS_change", linesep = "") |> 
+  kable_styling(latex_options = "hold_position") |> 
+  save_kable(here("out/tables/VarTab_VOTE_logPDENS_change.tex"))
 ```
 
 
@@ -1183,31 +1204,31 @@ round(rowSums(paris_varTab),10)
 
 ### Variation scenarios
 
-In this scenario we suppose that the number of registered voter changes on a grid that is regular in logs.
+In this scenario we suppose that the number of population density changes on a grid that is regular in logs.
 Even for the extreme changes such as a tenfold increase of the population or reduction to one tenth would not lead to a lot of variation.
-When Paris is shrunk to the size of a village with $1000$ registered voters we see considerable differences.
+When the population of Paris is shrunk one $0.1\%$ of its original size we see considerable differences.
 
 ```{r}
 #| fig-show: hold
 paris_size_scenario <- paris[rep(1,101),]
-paris_size_scenario$REGISTERED <- paris_size_scenario$REGISTERED * exp(seq(-log(1000),log(10),length.out = 101))
+paris_size_scenario$POP_DENSITY <- paris_size_scenario$POP_DENSITY * exp(seq(-log(1000),log(10),length.out = 101))
 paris_size_scenario$VOTE <- as(predict(VOTE_model,space = "simplex", newdata = paris_size_scenario), "matrix")
 colnames(paris_size_scenario$VOTE) <- colnames(VOTE)
 
 paris_size_scenario_gg <- melt(
   data = data.table(paris_size_scenario),
-  id.vars = "REGISTERED",
+  id.vars = "POP_DENSITY",
   measure.vars = make.names(paste0("VOTE.",colnames(VOTE))))
 
 
 unmake_votenames <- structure(colnames(VOTE), names = make.names(paste0("VOTE.",colnames(VOTE))))
 paris_size_scenario_gg[,variable := factor(unmake_votenames[variable],unmake_votenames)]
 ggplot(paris_size_scenario_gg) +
-  geom_vline(xintercept = paris$REGISTERED) +
-  geom_line(aes(x = REGISTERED, y = value, col = variable, lty = variable)) +
+  geom_vline(xintercept = paris$POP_DENSITY) +
+  geom_line(aes(x = POP_DENSITY, y = value, col = variable, lty = variable)) +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(labels = scales::percent) +
-  labs(y = "vote share", x = "number of registered voters", col = "candidate", lty = "candidate") +
+  labs(y = "vote share", x = "population density", col = "candidate", lty = "candidate") +
   theme_bw()
 
 ggsave(here("out/figures","y_compo_variation_scatter.pdf"), height = 5, width = 7)
@@ -1226,12 +1247,13 @@ For X-compositional variables the clr coefficients also correspond to difference
 clr_confint <- confint(VOTE_model, "PROFCAT")
 clr_confint$Y <- factor(clr_confint$Y,levels = flevels)
 clr_confint_all <- clr_confint
-clr_confint_all$Y <- factor("Mean elasticity", flevels)
+clr_confint_all$Y <- factor("-Mean elasticity", flevels)
 clr_confint_all$SD <- clr_confint_all$EST
 clr_confint_all$EST <- NA
 clr_confint_all$`2.5 %` <- NA
 clr_confint_all$`97.5 %` <- NA
 clr_confint_all <- unique(clr_confint_all)
+levels(ME$Y)[1] <- "-Mean elasticity"
 
 ggplot(rbind(clr_confint,clr_confint_all)) +
   theme_bw() +
@@ -1241,9 +1263,9 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  geom_violin(aes(y = EST, x = Y),data = ME[X!="log(REGISTERED)"]) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X!="log(POP_DENSITY)"]) +
   facet_wrap("X") +
-  labs(y = "clr parameter values & confidence intervals\ndistribution of mean elasticity", x = NULL) +
+  labs(y = "parameter values & confidence intervals\ndistribution of negative mean elasticity", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "clr_B_profcat_with_details.pdf"), height = 4, width = 7)
@@ -1259,9 +1281,9 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  geom_violin(aes(y = EST, x = Y),data = ME[X!="log(REGISTERED)"]) +
+  geom_violin(aes(y = EST, x = Y),data = ME[X!="log(POP_DENSITY)"]) +
   facet_wrap("X") +
-  labs(y = "clr parameter values", x = NULL) +
+  labs(y = "parameter values", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
@@ -1317,17 +1339,21 @@ For a change towards the vertex "Upper" we get the following:
 
 ```{r}
 paris_varTab <- VariationTable(VOTE_model, "PROFCAT", Xdir = "Upper",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
-
-format_VarTab(paris_varTab, 4) |> 
-  kable(caption = "Change of (PC) in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE)
+tab_atr <- attributes(paris_varTab)
+paris_varTab <- format_VarTab(paris_varTab, 3, 0,digitsP = 2,digitsPP = 2)
+paris_varTab |> 
+  kable(caption = "Change of (PC) in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE) |> 
+    add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2)))  
 ```
 
 
 ```{r}
 #| include: false
-format_VarTab(paris_varTab, 4) |> 
+paris_varTab |> 
   kable(caption = "Change of PC in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE,
         format = "latex", label = "VarTab_VOTE_Xe_change", linesep = "") |> 
+  kable_styling(latex_options = "hold_position") |> 
+  # add_footnote(sprintf("h = %s", tab_atr$inc_size))  |> 
   save_kable(here("out/tables/VarTab_VOTE_Xe_change.tex"))
 ```
 
@@ -1343,7 +1369,8 @@ paris_varTab <- VariationTable(
   obs = paris_num,
   Ytotal = mun2model$REGISTERED[paris_num])
 
-format_VarTab(paris_varTab, 4) |> 
+paris_varTab <- format_VarTab(paris_varTab, 3, 0,digitsP = 2,digitsPP = 2)
+paris_varTab |> 
   kable(caption = "Change of PC in a general direction", digits = 4, booktabs = TRUE)
 
 ```
@@ -1351,11 +1378,11 @@ format_VarTab(paris_varTab, 4) |>
 
 ```{r}
 #| include: false
-paris_varTab |>  
-  format_VarTab() |> 
+paris_varTab |> 
   kable(caption = "Change in a general direction", digits = 4, booktabs = TRUE ,
       format = "latex", label = "VarTab_VOTE_Xu_change", linesep = "")  |> 
-  save_kable(paris_varTab, file = here("out/tables/VarTab_VOTE_Xu_change.tex"))
+  kable_styling(latex_options = "hold_position") |> 
+  save_kable(file = here("out/tables/VarTab_VOTE_Xu_change.tex"))
 ```
 
 
@@ -1374,12 +1401,12 @@ unmake_pc_vote_names <- c(
 
 paris_pred1_gg <- melt(
   data = data.table(paris_pred1),
-  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
+  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT"),
   measure.vars = names(unmake_pc_vote_names))
 
 paris_pred2_gg <- melt(
   data = data.table(paris_pred2),
-  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT_LOGIT","PRED_TURNOUT"),
+  id.vars = c("H_SEQ","F_SHARE","PRED_TURNOUT"),
   measure.vars = names(unmake_pc_vote_names))
 
 paris_pred_gg <- rbind(
@@ -1469,8 +1496,80 @@ par(opar)
 ```
 
 
+### Share ratio tables
 
-# AcUpperments {-}
+```{r}
+ShareRatioTable <- function(
+  object,
+  Xvar,
+  Xdir, 
+  as_matrix = FALSE){
+  
+  
+  stopifnot(is(object, "lmCoDa"),
+            is.character(Xvar) && length(Xvar) == 1,
+            is.numeric(Xdir))
+  
+  trSry <- object$trSry
+  Xcomp_names <- names(Filter(function(x) x>=1, trSry$D[-1]))
+  Xcomp_names <- unlist(trSry$NAME_SIMPLEX[Xcomp_names])
+  if (!Xvar %in% Xcomp_names) stop("Xvar musst be one of ", list(Xcomp_names), "!")
+  Xpos <- which(unlist(trSry$NAME_SIMPLEX) == Xvar)
+  if (trSry$D[[Xpos]] != length(Xdir) || any(Xdir <= 0)) stop("Xvar musst be a non-negative vector of length ", trSry$D[Xvar], "!")
+  if (trSry$D[1] == 0) stop("Share ratio tables are only implemented when X and Y are compositional!")
+  
+  
+  B  <- trSry$COEF_CLR[[Xpos]]
+  u  <- Xdir/sum(Xdir)
+  uB <- log(u) %*% B
+  resY <- cbind(
+    expand.grid(Yj  = colnames(B), Yl = colnames(B)),
+    expand.grid(uBj = t(uB)      , uBl = t(uB)))
+  resX <- cbind(
+    expand.grid(Xj  = rownames(B), Xl = rownames(B)),
+    expand.grid(uj  = log(u)     , ul = log(u)))
+  
+  resY <- resY[resY$Yj != resY$Yl,]
+  resX <- resX[resX$Xj != resX$Xl,]
+  resXY <- merge(resY, resX)
+  resXY$SR <- (resXY$uBj - resXY$uBl) / (resXY$uj - resXY$ul)
+  resXY[c("uBj","uBl","uj","ul")] <- NULL
+  if (!as_matrix) return(resXY)
+  
+  
+  Dx <- trSry$D[[Xpos]]
+  Dy <- trSry$D[[1]]
+  resMat <- matrix(resXY$SR,ncol = Dx^2 - Dx, nrow = Dy^2 - Dy)
+  rownames(resMat) <- paste0(resY$Yj, "/", resY$Yl)
+  colnames(resMat) <- paste0(resX$Xj, "/", resX$Xl)
+  return(resMat)
+  
+}
+```
+
+
+```{r}
+sr_tab <- ShareRatioTable(VOTE_model,Xvar = "PROFCAT", Xdir = dir_gen)
+sr_tab$Yr <- paste0(as.character(sr_tab$Yj), " / ",as.character(sr_tab$Yl))
+sr_tab$Xr <- paste0(as.character(sr_tab$Xj), " / ",as.character(sr_tab$Xl))
+sr_tab$Yr <- factor(sr_tab$Yr, (unique(sr_tab$Yr)))
+sr_tab$Xr <- factor(sr_tab$Xr, (unique(sr_tab$Xr)))
+
+ggplot(sr_tab) +
+  geom_point(aes(x = Yr, y = Xr, col = SR, pch = SR > 0), size = 5) +
+  coord_fixed() +
+  scale_color_continuous_diverging(rev = T,na.value = "white") +
+  scale_shape_manual(breaks = c(T,F), values = c(20,18)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90,hjust = 1, vjust = .5)) +
+  labs(x = "Share ratio of Y", y = "Share ratio of X", col = "SRy / SRx", shape = "SRy / SRx > 0")
+
+ggsave(here("out/figures/xy_compo_share_ratio_matrix.pdf"), height = 5)
+```
+
+
+
+# Acknowledgements {-}
 
 The example used to illustrate this work is taken from a Statistical Consulting project class of the Master in Data Science for Social Sciences of The Toulouse School of economics, in cooperation with he Market Research agency BVA.
 The project was a great experience and we want thank again all participants.

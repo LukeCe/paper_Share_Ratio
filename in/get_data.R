@@ -5,6 +5,7 @@ library("archive")
 library("data.table")
 library("here")
 library("stringr")
+library("sf")
 
 
 # local
@@ -12,6 +13,10 @@ source(here("R/utils_messages.R"))
 
 # dir
 dir.create(here("in/data"),showWarnings = FALSE, recursive = TRUE)
+
+# options
+oop <- options(timeout = 1000)
+
 
 # ---- Election data a municipality level -------------------------------------
 sec___________________________________________________________________________(
@@ -108,8 +113,21 @@ mun_profcat <- iris_profcat[,lapply(.SD, sum),.SDcols = keep_cols, by = "COM"]
 setnames(mun_profcat, "COM", "ID_MUN")
 message("Finished census data preparations.")
 message_df(head(mun_profcat,2))
+
 message("Wrting results to disc...")
 saveRDS(mun_profcat, here("in/data/mun_profcat.Rds"))
 
 
+sec___________________________________________________________________________(
+  "Spatial polygons of municipalities.")
+mun_geo <- "https://wxs.ign.fr/x02uy2aiwjo9bm8ce5plwqmr/telechargement/prepackage/ADMINEXPRESS-COG_SHP_TERRITOIRES_PACK_2021-05-19$ADMIN-EXPRESS-COG_3-0__SHP_LAMB93_FXX_2021-05-19/file/ADMIN-EXPRESS-COG_3-0__SHP_LAMB93_FXX_2021-05-19.7z"
+download.file(mun_geo,destfile = "mun_geo.7z")
+archive_extract("mun_geo.7z")
+mun_geo <- read_sf("ADMIN-EXPRESS-COG_3-0__SHP_LAMB93_FXX_2021-05-19/ADMIN-EXPRESS-COG/1_DONNEES_LIVRAISON_2021-05-19/ADECOG_3-0_SHP_LAMB93_FXX/COMMUNE.shp")
+unlink("mun_geo.7z")
+unlink("ADMIN-EXPRESS-COG_3-0__SHP_LAMB93_FXX_2021-05-19", recursive = TRUE)
 
+
+message("Wrting results to disc...")
+saveRDS(mun_geo, here("in/data/mun_geo.Rds"))
+options(oop)

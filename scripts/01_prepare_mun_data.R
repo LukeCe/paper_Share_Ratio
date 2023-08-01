@@ -1,18 +1,20 @@
 # cran
-library("here")
 library("data.table")
+library("here")
+library("sf")
 
 # local
 source(here("R/utils_messages.R"))
 
 # data
-mun_elec <- readRDS("in/data/mun_elec.Rds")
-mun_profcat <- readRDS("in/data/mun_profcat.Rds")
+mun_elec <- readRDS(here("in/data/mun_elec.Rds"))
+mun_profcat <- readRDS(here("in/data/mun_profcat.Rds"))
+mun_geo <- readRDS(here("in/data/mun_geo.Rds"))
 
 # dir
 dir.create(here("out/data"),showWarnings = FALSE, recursive = TRUE)
 
-# ---- ID_MUNbine data sources ---------------------------------------------------
+# ---- combine data sources ---------------------------------------------------
 sec___________________________________________________________________________(
   "Combine election and cesus data.")
 stopifnot(all(complete.cases(mun_profcat)))
@@ -60,8 +62,20 @@ mun_elec2census <- merge(mun_elec, mun_profcat, by.x = "ID_MUN", by.y = "ID_MUN"
 stopifnot(all(complete.cases(mun_elec2census)),
           nrow(mun_elec2census) == nrow(mun_elec))
 
-message("Successfully combined census and election data.\n",
-        "Writing results to file out/data/mun_elec2census.Rds")
-saveRDS(mun_elec2census, here("out/data/mun_elec2census.Rds"))
 
+subsec________________________________________________________________________(
+  "Add population density from geographic data.")
+mun_geo$"AREA_M2" <- st_area(mun_geo)
+mun_geo$"AREA" <- as.numeric(mun_geo$"AREA_M2" / (1e6))
+setDT(mun_geo)
+stopifnot(all(mun_elec2census$ID_MUN %in% mun_geo$INSEE_COM))
+mun_geo <- mun_geo[,c("INSEE_COM","AREA","POPULATION")]
+mun_elec2census <- merge(mun_elec2census,mun_geo,by.x = "ID_MUN", by.y = "INSEE_COM")
+
+stopifnot(all(complete.cases(mun_elec2census)),
+          nrow(mun_elec2census) == nrow(mun_elec))
+message("Successfully combined census, election and geographic data.")
+
+message("Writing results to file out/data/mun_elec2census.Rds")
+saveRDS(mun_elec2census, here("out/data/mun_elec2census.Rds"))
 
