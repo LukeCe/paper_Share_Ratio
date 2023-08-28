@@ -3,6 +3,8 @@ title: "Modeling the French presidential elections of 2022 with CoDa tools"
 author:
   - Lukas Dargel
   - Christine Thomas-Agnan
+date: "2023-08-28"
+date-modified: "last-modified"
 format:
   html:
     theme: minty
@@ -25,11 +27,14 @@ dir.create(here::here("out","figures"),showWarnings = FALSE,recursive = TRUE)
 dir.create(here::here("out","tables"),showWarnings = FALSE,recursive = TRUE)
 ```
 
-
+This vignette accompanies our article "Share-ratio interpretations of compositional regression models", which is currently [available as a working paper](https://www.tse-fr.eu/publications/share-ratio-interpretations-compositional-regression-models).
+It contains all the code necessary to reproduce the article's results and provides additional illustrations.
 
 ```{r setup}
 #| warning: false
 #| message: false
+
+# cran dependencies
 library("colorspace")
 library("CoDaImpact")
 library("compositions")
@@ -41,6 +46,7 @@ library("skimr")
 library("stringr")
 library("zCompositions")
 
+# local functions
 save_baseplot <- function(device, ..., which){
   suppressMessages({
     dev.copy(device, ..., which)
@@ -48,49 +54,32 @@ save_baseplot <- function(device, ..., which){
     invisible(TRUE)
   })
 }
-format_VarTab <- function(VT, digits = 4, digitsU = max(digits - 2, 0), digitsP = digits,  digitsPP = digits) {
-  VT <- t(VT)
-  VT <- as.data.frame(round(VT, digits))
-  
-  v <- "Variation in units"
-  if (!is.null( VT[[v]])) VT[[v]] <- round(VT[[v]], digitsU)
-  
-  v <- "Variation in %"
-  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsP), " %")
-  
-  v <- "Variation in % points"
-  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsPP), " %")
-  t(VT)
-}
 
-options(knitr.kable.NA = '',
-        scipen = 9,
-        warn = 1)
+# options
+options(
+  knitr.kable.NA = '',
+  scipen = 9,
+  warn = 1)
 
+# data
 mun_elec2census <- readRDS(here("out/data/mun_elec2census.Rds")) # election data combined with the census
 mun_elec <- readRDS(here("in/data/mun_elec.Rds")) # original election data 
 ```
 
-
-The vignette illustrates results of the article from Dargel and Thomas-Agnan (2023).
-
-
 # Introduction
 
-We illustrate the use of CoDa tools to analyse the results of political elections based on the example of the French presidential elections of 2022.
-Our main focus lays on the illustration of mathematical tools that enable new ways for interpretation of CoDa models.
-Other issues such as the selection of explanatory variables and the treatment of zeros are treated more briefly.
-
+We illustrate the use of compositional data analysis (CoDa) to analyze the results of political elections using the example of the French presidential elections of 2022.
+Our primary focus is the illustration of mathematical tools that enable new ways to interpret CoDa regression models.
+Therefore, other issues, such as variable selection and zeros handling, are treated more briefly.
 
 # Descriptive statistics
 
-The study combine the official election results with census data.
+The study combines the official election results with census data:
 
-  -  [The original census data is available on the INSEE website](https://www.insee.fr/fr/statistiques/6543200#consulter)
-  -  [The official election results are provided by the French government and can be dowloaded here](https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour/)
-  
+-   [The original census data is available on the INSEE website](https://www.insee.fr/fr/statistiques/6543200#consulter)
+-   [The French government provides the official election results via this link](https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour/)
 
-## Data overview 
+## Data overview
 
 Let us have a first look at the combined data set.
 
@@ -98,13 +87,11 @@ Let us have a first look at the combined data set.
 skim(mun_elec2census)
 ```
 
-
-## Compare losses due to preprocessing 
+## Compare losses due to preprocessing
 
 We lose some of the registered voters in France because the census data only covers individuals living in mainland France.
-The overseas departments and voters living in a foreign country are not covered by our analysis.
-Let us compare the original voting data with the combined voting data to assess the losses and potential biases.
-
+Our analysis does not cover the overseas territories and voters living in a foreign country.
+Let us compare the original and combined voting data to assess the losses and potential biases.
 
 ```{r}
 rename_elec <- c(
@@ -129,11 +116,6 @@ rename_elec <- c(
   EXPRESSED = "Expressed",
   REGISTERED = "Registered")
 
-```
-
-
-```{r}
-# original election columns
 elec_cols <- setdiff(names(mun_elec), c("ID_MUN", "NAME_MUN", "NAME_DEP"))
 pct <- function(x) scales::percent(x,accuracy = .1)
 summarize_elec <- function(dt) {
@@ -177,13 +159,12 @@ kable(cbind(elec_original, elec_combined)) |>
   column_spec(1, bold = T) 
 ```
 
-
 ## Check for problems with zeros
 
-Since CoDa models do not handle zero proportions in the dependent and independent compositional variables we have to treat the problem of zero before we can estimate a the models.
-We will first use amalgamations, followed by an imputation where we replace the remaining zeros with small values.
-Th amalgamations consist in grouping multiple professional categories or political candidates into larger blocks.
-While the grouping we propose is based our intuitive understanding a case study of the French electoral sociology should certainly place more thought in these actions.
+Because CoDa models cannot effectively handle cases where dependent or independent compositional variables have zero proportions, it is necessary to address the zeros issue before estimating the models.
+To address this, we will initially employ amalgamations and impute the remaining zero values by a small constant.
+The amalgamation process combines various professional categories or political candidates into larger blocks.
+However, it is important to note that our proposed grouping is ad hoc, and a case study of electoral sociology should certainly place more thought into these actions.
 
 ### In the vote data
 
@@ -194,8 +175,10 @@ zero_summary <- function(dt) dt[,lapply(.SD, function(x) pct(sum(x==0)/.N))]
 t(zero_summary(mun_elec2census[,..elec_cols]))
 ```
 
-One way to solve the problem is amalgamations.
-We see that almost $98.5\%$ of observations are complete now.
+To reduce the number of zero votes, we group the minor candidates into a "left" and a "right" block, each containing four candidates.
+Additionally, we group invalid votes, blank votes and abstentions into the "No vote" block.
+After these amalgamations, we obtain a visual impression of the zero patterns in the new composition using the `zCompositions::zPatterns()` function.
+The graph reveals that almost $98.5\%$ of the municipalities have non-zero compositions now.
 
 ```{r}
 left_bloc <- c("ARTHAUD_Nathalie", "ROUSSEL_Fabien", "HIDALGO_Anne", "JADOT_Yannick", "POUTOU_Philippe")
@@ -216,11 +199,8 @@ zPatterns(
   label="0")
 ```
 
-`r zv <- sum(0 != rowSums(VOTE == 0))`
-The remaining zeros are imputed.
-Here we simply add one vote to all candidates (or blocks) in each municipality with at least one zero.
-For out `VOTE` composition we impute data in `r zv` municipalities which lead `r zv*ncol(VOTE)` additional registered voters.
-
+`r zv <- sum(0 != rowSums(VOTE == 0))` The remaining zeros are imputed by simply adding one vote to all candidates (or blocks) in each municipality with at least one zero.
+This imputation affected `r zv` municipalities, adding an overall number of `r zv*ncol(VOTE)` fictive voters.
 
 ```{r}
 is_zero_row <- 0 != rowSums(VOTE == 0) 
@@ -232,15 +212,13 @@ cbind(
   sum(VOTE_IMP) - sum(VOTE))
 ```
 
-#### Before and after
+#### Before and after imputation
 
-Let us check the impact of the imputation on the distribution of the data.
-We see that our imputation leads an increase in the variance, but does not affect the average in a noticeable way.
-This is expected because our imputation method replaces zeros (red bars in the graphic) with points close to the edge of the triangle, which are extreme values in the simplex sense.
+We compare the data distribution in the original and imputed data sets to ensure that the imputation does not distort our analysis.
+Comparing the two distributions below reveals no noticeable changes in the mean but a slight increase in the variance.
+The effect on the variance is not surprising since our imputation method replaces zeros (red bars in the graphic) with points close to the edge of the triangle, which are extreme values in the simplex sense.
 
 ```{r}
-#| fig-show: "hold"
-
 simplex_isodensity <- function(
   data,
   quantiles = c(0.5,1:9,9.5)/10,
@@ -263,7 +241,10 @@ simplex_isodensity <- function(
     ellipses(cen,var,r, col=col2)
   }
 }
+```
 
+```{r}
+#| fig-show: "hold"
 opar <- par(mar=c(0,3,0,3), mfrow = c(1,2))
 simplex_isodensity(acomp(VOTE_IMP[,1:3]))
 title(sub = "Imputed", outer = FALSE)
@@ -282,23 +263,20 @@ title(sub = "Original")
 par(opar)
 ```
 
-
-
 ### In the professional categories (PC) data
 
 The professional categories data directly comes from the French population census provided by the INSEE.
-It categorizes the population above the age of 15 into one of eight groups.
+It categorizes the population above 15 into one of eight groups.
 The categories correspond to
 
-  + `C19_POP15P_CS1`: Agriculteurs exploitants
-  + `C19_POP15P_CS2`: Artisans, Commerçants, Chefs d'entreprise
-  + `C19_POP15P_CS3`: Cadres et Professions intellectuelles supérieures
-  + `C19_POP15P_CS4`: Professions intermédiaires
-  + `C19_POP15P_CS5`: Employés
-  + `C19_POP15P_CS6`: Ouvriers
-  + `C19_POP15P_CS7`: Retraités
-  + `C19_POP15P_CS8`: Autres sans activité professionnelle
-
+-   `C19_POP15P_CS1`: Agriculteurs exploitants
+-   `C19_POP15P_CS2`: Artisans, Commerçants, Chefs d'entreprise
+-   `C19_POP15P_CS3`: Cadres et Professions intellectuelles supérieures
+-   `C19_POP15P_CS4`: Professions intermédiaires
+-   `C19_POP15P_CS5`: Employés
+-   `C19_POP15P_CS6`: Ouvriers
+-   `C19_POP15P_CS7`: Retraités
+-   `C19_POP15P_CS8`: Autres sans activité professionnelle
 
 ```{r}
 pc_cols <- names(mun_elec2census)
@@ -306,8 +284,8 @@ pc_cols <- pc_cols[grep("^C19_", pc_cols)]
 t(zero_summary(mun_elec2census[,..pc_cols]))
 ```
 
-Since the number of municipalities having zero share of some of these categories is to large we proceed with an amalgamation of the eight original groups into four broader categories.
-Using the new categorization about  $95%$ of the municipalities have are complete.
+Since the number of municipalities having zero share of some of these categories is too large, we amalgamate the eight original groups into four broader categories.
+Using the new categorization, about $95\%$ of the municipalities have no zero value in all components.
 
 ```{r}
 PROFCAT <- cbind(
@@ -324,9 +302,8 @@ zPatterns(
   axis.labels = c(NA,NA))
 ```
 
-`r zv <- sum(0 != rowSums(PROFCAT == 0))`
-We impute the data using the same strategy as before.
-Here we impute data in `r zv` municipalities leading to `r zv*ncol(PROFCAT)` additional "inscriptions".
+`r zv <- sum(0 != rowSums(PROFCAT == 0))` Using the previous strategy, we add one individual to all PCs in each municipality with at least one zero component.
+Overall, this imputation affected `r zv` municipalities, adding a total of `r zv*ncol(PROFCAT)` fictive individuals.
 
 ```{r}
 is_zero_row <- 0 != rowSums(PROFCAT == 0) 
@@ -339,7 +316,8 @@ cbind(
 
 #### Before and after imputation
 
-We have the same results as before, but the increase in variance appears more pronounced.
+We proceed to compare the distribution of the PC compositions before and after our imputation process.
+In the graphics below, the mean seems unaffected, while the variance grows more substantially than in the case of the VOTE composition.
 
 ```{r}
 #| fig-show: "hold"
@@ -361,13 +339,9 @@ title(sub = "Original")
 par(opar)
 ```
 
-
 # Exploratory analysis
 
-
-We defined the data set for our analysis.
-Which is based on the imputed vote and professional categories (PC) data.
-
+For the analysis, we proceed with the imputed VOTE and PC data.
 
 ```{r}
 mun2explore <- data.table(
@@ -376,30 +350,23 @@ mun2explore <- data.table(
 mun2explore <- cbind(mun2explore, VOTE_IMP, PROFCAT_IMP)
 ```
 
-
-## Concentration
-
-(Not yet ready)
-
-
 ## Heteroskedasticity
 
-
-Since election data corresponds to aggregations of individual choices we should suspect heteroskedasticity.
-The scatter plot below shows that that the share of "non votes" is directly impacted by the total number of voters.
-Additionally, its volatility seems to decrease with the size of the municipality in terms number if voters.
+Since election data corresponds to aggregations of individual choices, we should suspect heteroskedasticity.
+The scatter plot below shows that the number of voters directly impacts the turnout rate.
+Additionally, its volatility decreases with the size of the municipality in terms of the number of voters.
 
 ```{r}
 #| warning: false
 #| message: false
-ggplot(mun2explore[REGISTERED < 300000,], aes(x = sqrt(REGISTERED), y = `No vote`/REGISTERED)) +
+ggplot(mun2explore[REGISTERED < 300000,], aes(x = sqrt(REGISTERED), y = 1 - `No vote`/REGISTERED)) +
   geom_point() +
   geom_smooth() +
   theme_bw() +
   theme()
 ```
 
-A similar pattern is observed for all vote variables.
+The graphic below reveals the same pattern for all components of the VOTE data.
 
 ```{r}
 #| fig-show: hold
@@ -427,8 +394,7 @@ ggplot(mun2explore_long, aes(x = REGISTERED_BINS, y = value_rel)) +
 ggsave(here("out/figures", "vote6_boxplots.pdf"), width = 7, height = 6)
 ```
 
-
-For the profession categories we have the same pattern.
+For the professional categories, we observe again the same pattern.
 
 ```{r}
 #| fig-show: hold
@@ -449,10 +415,8 @@ ggplot(mun2explore_long2, aes(x = REGISTERED_BINS, y = value_rel)) +
 ggsave(here("out/figures", "profcat4_boxplots.pdf"), width = 7, height = 6)
 ```
 
-
-
 ```{r}
-# after the imputations we decide on the data that is used for modelling
+# After the imputations, we decide on the data for modeling
 mun2model <- data.frame(
   ID_MUN = mun_elec2census$ID_MUN,
   REGISTERED = rowSums(as.matrix(VOTE_IMP)),
@@ -462,12 +426,10 @@ mun2model[["VOTE"]] <- as.matrix(VOTE_IMP)/mun2model$REGISTERED
 mun2model[["PROFCAT"]] <- as.matrix(PROFCAT_IMP)/rowSums(PROFCAT_IMP)
 ```
 
-
 # Understanding "linear" changes in compositional variables
 
-Here illustrate how compositional variables change using based on the composition of semiprofessional categories in Paris.
-In the next section we will show how these changes affect the dependent variable on a model.
-Below we have the observed composition for the Paris municipality.
+In this section, we illustrate how compositional variables change based on the PC composition in Paris.
+Below, we have the observed composition for the Paris municipality.
 
 ```{r}
 paris_id <- "75056"
@@ -475,11 +437,11 @@ paris <- mun2model[mun2model$ID_MUN == paris_id,,drop = FALSE]
 paris$PROFCAT
 ```
 
-In the following two subsections take this point of departure and add a sequence of linear increments, where linearity is understood with respect to the geometry of the simplex.
-It should be evident that a linear increment of a multivariate vector is defined by a direction and a step size $h=0.1$.
-Since we normalized the direction to unit length $h$ reflecets the Aitchison distance between two sequential points.
+In the following subsections, take the composition of Paris as a point of departure and add a sequence of linear increments, where linearity refers to the simplex geometry.
+It should be evident that a linear increment of any multivariate vector is defined by a direction and a step size $h=0.1$.
+Since we normalized the direction to unit length $h$ reflects the Aitchison distance between two sequential points.
 
-## Changing in direction of first vertex
+## Changing in direction of the first vertex
 
 ```{r}
 paris_pcseq1 <- CoDa_path(
@@ -489,42 +451,42 @@ paris_pcseq1 <- CoDa_path(
   step_size = .1) # take the same step size as before
 ```
 
-Here we consider the direction that points from the original composition to directly to the first vertex of the simplex.
-For our example the first vertex identifies the share of  workers.
-Moving along this direction has the special property that the subcomposition that excludes the first element remains constant after closure.
-This becomes evident when looking at the two ternary diagrams below, where the first shows the subcomposition that excludes "Other" and the second the one that excludes "Upper".
-The composition observed for Paris is shown as a red cross.
+We consider the direction that points to the first vertex of the simplex, in our example, the share of "Upper".
+The two ternary diagrams below reveal how the PC composition changes along the path defined by this direction.
+The initial composition observed for Paris is shown as a red cross.
+One particularity of this direction is that the subcomposition excluding "Other" remains constant along the path.
+
 
 ```{r}
 #| fig-show: hold
 #| message: false
 #| fig-pos: h
-opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
+opar <- par(mfrow = c(1,2),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
 plot.acomp(paris_pcseq1[,-4])
 plot.acomp(paris_pcseq1["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
 
 plot.acomp(paris_pcseq1[,-1])
 plot.acomp(paris_pcseq1["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
 
-save_baseplot(pdf, here("out/figures/","Xe_change_ternary.pdf"), width = 7, height = 4)
+save_baseplot(pdf, here("out/figures/","Xe_change_ternary.pdf"), width = 7, height = 3)
 par(opar)
 ```
-Both graphics above make clear that the ratios between all components except the first stay constant.
-This also explains why the path in the left ternary plot appears linear in euclidean sense.
-The same changes can be visualized in a stacked bar-plot, where the ratio of bar heights for the remains constant except when "Upper" is involved.
-Here we only show changes for the steps defined by $h = -50,...,50$.
+
+Both graphics above make clear that the ratios between all components except "Upper" remain constant.
+This also explains why the path in the left ternary plot appears linear in the Euclidean sense.
+Below, we represent the same path as a stacked bar plot, where the ratio of bar heights remains constant except when "Upper" is involved.
 
 ```{r}
 #| fig-show: hold
 names(paris_pcseq1) <- colnames(PROFCAT)
 window <- as.character(seq(-40,40,by = 2))
-barplot(acomp(paris_pcseq1[window,,drop=FALSE]))
+barplot(acomp(paris_pcseq1[window,,drop=FALSE]), xlab = "value of h")
 save_baseplot(pdf, here("out/figures","Xe_change_barplot.pdf"))
 ```
 
 Another way to look at the changing composition is to present the changes to all components as a function of the share of "Upper".
-In this graphic we additionally display the empirical distribution of the share of "Upper" over all municipalities.
-The vertical line intersects the other at the observed composition for Paris, showing that Paris is an outlier in the "Upper" dimension.
+In this graphic, we additionally display the empirical distribution of the share of "Upper" over all municipalities.
+The vertical line intersects the other in the observed composition for Paris, showing that Paris is an extreme observation in the "Upper" dimension.
 
 ```{r}
 #| fig-show: hold
@@ -551,14 +513,14 @@ ggplot(paris_pcseq1_gg) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   scale_linetype_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = 1:4,
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   labs(x = "% in professional category: Upper",
        y = "% in professional category") +
@@ -567,7 +529,6 @@ ggplot(paris_pcseq1_gg) +
 
 ggsave(here("out/figures/Xe_change_scatter_with_details.pdf"), height = 6, width = 6)
 ```
-
 
 ```{r}
 #| include: false
@@ -593,14 +554,14 @@ ggplot(paris_pcseq1_gg) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   scale_linetype_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = 1:4,
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   labs(x = "% in professional category: Upper",
        y = "% in professional category") +
@@ -610,12 +571,10 @@ ggplot(paris_pcseq1_gg) +
 ggsave(here("out/figures/Xe_change_scatter.pdf"), height = 6, width = 6)
 ```
 
-
-
 ## Changing in a general direction
 
-The same procedure can be replaced for a general direction.
-Here we chose a path for which the share of "Upper" passes through the whole interval $(0,1)$, because we want to show graphics that are comparable to the previous ones.
+We repeat the same linear increment procedure for a more general direction.
+Here, we chose a path for which the share of "Upper" passes through the whole interval $(0,1)$, because we want to show graphics comparable to the previous ones.
 
 ```{r}
 dir_gen <- c(.1,.5,.25,.15)
@@ -627,34 +586,32 @@ paris_pcseq2 <- CoDa_path(
 ```
 
 An alternative direction is the one that points from the observed point for Paris to the origin of the simplex.
-The two ternary diagrams below show a path generated along this direction, where the red cross is the empirical composition for Paris and the blue star the origin.
+The two ternary diagrams below show a path generated along this direction, where the red cross is the empirical composition for Paris and the blue star is the origin.
 
 ```{r}
 #| fig-show: "hold"
-opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
+opar <- par(mfrow = c(1,2),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
 plot.acomp(paris_pcseq2[,-4])
 plot.acomp(paris_pcseq2["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
 
 plot.acomp(paris_pcseq2[,-1])
 plot.acomp(paris_pcseq2["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
 
-save_baseplot(pdf, here("out/figures/","Xu_change_ternary.pdf"), width = 7, height = 4)
+save_baseplot(pdf, here("out/figures/","Xu_change_ternary.pdf"), width = 7, height = 3, bg = "transparent")
 par(opar)
 ```
 
-The simplex-linear path generated by this direction looks more complex because it is non-linear in euclidean sense.
-For this path we also the ratios of the other components are no-longer constant and the changes are generally also not monotonic.
-This becomes evident when looking the shares of "Other" and "Retired" that peak close to the center of our variation and decline towards both edges.
-
+The simplex-linear path this direction generates looks more complex than the previous one because it is non-linear in the Euclidean sense.
+For this path, the ratios of the other components are no longer constant, and the changes are generally not monotonic.
+The lack of monotonicity is evident from the shares of "Other" and "Retired" that peak close to the center of our variation and decline towards both edges.
 
 ```{r}
 names(paris_pcseq2) <- colnames(PROFCAT)
 window <- as.character(seq(-80,80,by = 4))
-barplot(acomp(paris_pcseq2[window,,drop=FALSE]))
+barplot(acomp(paris_pcseq2[window,,drop=FALSE]), xlab = "value of h")
 save_baseplot(pdf, here("out/figures/","Xu_change_barplot.pdf"))
 ```
 
-When looking at the functional representation of this linear path we clearly see that the shares for each professional category cross at the origin of the 4-dimensional simplex.
 The intersection with the black line is again the empirical composition of Paris.
 
 ```{r}
@@ -663,7 +620,6 @@ paris_pcseq2_gg <- data.frame(paris_pcseq2)
 colnames(paris_pcseq2_gg) <- paste0("PC", 1:4)
 ggplot(paris_pcseq2_gg) +
   geom_vline(xintercept = paris$PROFCAT[[1]]) +
-  geom_vline(xintercept = 1/4, col = "grey55") +
   geom_line(aes(x = PC1, y = PC1, col = "1", lty = "1"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC2, col = "2", lty = "2"), lwd = .51) +
   geom_line(aes(x = PC1, y = PC3, col = "3", lty = "3"), lwd = .51) +
@@ -683,14 +639,14 @@ ggplot(paris_pcseq2_gg) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   scale_linetype_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = 1:4,
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   labs(x = "% in professional category: Upper",
        y = "% in professional category") +
@@ -724,14 +680,14 @@ ggplot(paris_pcseq2_gg) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   scale_linetype_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = 1:4,
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   labs(x = "% in professional category: Upper",
        y = "% in professional category") +
@@ -741,11 +697,9 @@ ggplot(paris_pcseq2_gg) +
 ggsave(here("out/figures/Xu_change_scatter.pdf"), height = 6, width = 6)
 ```
 
-
-
 ## Changing in direction of the origin
 
-In the case where the direction and the starting point coincides the path will pass through the origin of the simplex.
+If the direction and the starting point coincide, the path will pass through the origin of the simplex.
 
 ```{r}
 paris_pcseq3 <- CoDa_path(
@@ -755,11 +709,11 @@ paris_pcseq3 <- CoDa_path(
   step_size = attr(paris_pcseq1,"step_size")) # take the same step size as before
 ```
 
-The two ternary diagrams below show a path generated along this direction, where the red cross is the empirical composition for Paris and the blue star the origin.
+The two ternary diagrams below show a path generated along this direction, where the red cross is the empirical composition for Paris and the blue star is the origin.
 
 ```{r}
 #| fig-show: "hold"
-opar <- par(mfrow = c(1,2),oma = c(0,0,0,0))
+opar <- par(mfrow = c(1,2),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
 plot.acomp(paris_pcseq3[,-4])
 plot.acomp(paris_pcseq3["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
 plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
@@ -770,18 +724,15 @@ plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
 par(opar)
 ```
 
-The simplex-linear path generated by this direction looks more complex because it is non-linear in euclidean sense.
-For this path we also the ratios of the other components are no-longer constant and the changes are generally also not monotonic.
-This becomes evident when looking the shares of "Other" and "Retired" that peak close to the center of our variation and decline towards both edges.
-
+The simplex-linear path generated by this direction is again non-linear in the Euclidean sense and also leads to non-monotonic changes in the shares of "Other" and "Retired".
 
 ```{r}
 names(paris_pcseq3) <- colnames(PROFCAT)
 window <- as.character(seq(-40,40,by = 2))
-barplot(acomp(paris_pcseq3[window,,drop=FALSE]))
+barplot(acomp(paris_pcseq3[window,,drop=FALSE]), xlab = "value of h")
 ```
 
-When looking at the functional representation of this linear path we clearly see that the shares for each professional category cross at the origin of the 4-dimensional simplex.
+When looking at the functional representation of this linear path, we see that the shares for each professional category cross at the origin of the 4-dimensional simplex.
 The intersection with the black line is again the empirical composition of Paris.
 
 ```{r}
@@ -810,14 +761,121 @@ ggplot(paris_pcseq3_gg) +
   scale_y_continuous(
     labels = scales::percent,breaks = seq(0,1,.25)) +
   scale_color_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = c("Red", "Orange", "Dark Blue", "Yellow"),
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   scale_linetype_manual(
-    breaks = c("1","2", "3", "4"),
+    breaks = c("1", "2", "3", "4"),
     values = 1:4,
-    name = "Professional\ncategory",
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
+  labs(x = "% in professional category: Upper",
+       y = "% in professional category") +
+  coord_equal() +
+  theme_bw()
+```
+
+## Changing in the relative compensation direction
+
+Another interesting direction compensates for the relative increase in one component by decreasing another component.
+Below, we illustrate this movement for the pair "Upper" and "Workers", where we see that the share of "Upper" moves towards its summit when $h$ increases and the share of "Worker moves away from the summit.
+
+```{r}
+#| fig-show: "hold"
+
+paris_pcseq4 <- CoDa_path(
+  comp_direc = exp(c(1,-1,0,0)),
+  comp_from = paris$PROFCAT,
+  add_opposite = FALSE, # only draw the line for one side
+  step_size = .1) 
+
+opar <- par(mfrow = c(1,3),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
+plot.acomp(paris_pcseq4[,-4])
+plot.acomp(paris_pcseq4["0",-4, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
+
+plot.acomp(paris_pcseq4[,-1])
+plot.acomp(paris_pcseq4["0",-1, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
+
+plot.acomp(paris_pcseq4[,-2])
+plot.acomp(paris_pcseq4["0",-2, drop = FALSE], col = "red", add = TRUE, pch = 3, cex = 2)
+plot.acomp(c(1,1,1), col = "blue", add = TRUE, pch = 8, cex = 2)
+par(opar)
+```
+
+One interesting aspect of this path is that it leads to an axial symmetry in the shares of the components "Other" and "Retired".
+
+```{r}
+paris_pcseq4 <- CoDa_path(
+  comp_direc = exp(c(1,-1,0,0)),
+  comp_from = paris$PROFCAT,
+  add_opposite = TRUE,
+  step_size = .1) 
+
+names(paris_pcseq4) <- colnames(PROFCAT)
+window <- as.character(seq(-70,70,by = 1))
+barplot(acomp(paris_pcseq4[window,,drop=FALSE]), xlab = "value of h")
+```
+
+The shares of the components "Other" and "Retired" are maximized at the point where those of "Upper" and "Workers" become equal.
+
+```{r}
+equal_point <- which.min(abs(paris_pcseq4$Workers - paris_pcseq4$Upper))
+focus_seq <- seq(-60,60)
+plot(x = focus_seq,y = paris_pcseq4$Other[focus_seq + equal_point], type = "l", col = "blue", xlab = NA, ylab = NA)
+lines(x = focus_seq,y = paris_pcseq4$Retired[focus_seq + equal_point], col = "red")
+title(xlab = 'steps around the point of equality in "Upper" and "Workers"',
+      ylab = 'shares of "Other" and "Retired"')
+```
+
+Another interesting point is that in clr space, the components "Other" and "Retired" are unaffected along this path.
+
+```{r}
+HT_dir_comp <- clr(rbind(head(paris_pcseq4, 2), paris_pcseq4["0",], tail(paris_pcseq4, 2)))
+rownames(HT_dir_comp) <- paste0("compensation direction: ", rownames(HT_dir_comp))
+HT_dir_vert <- clr(rbind(head(paris_pcseq1, 2), paris_pcseq4["0",], tail(paris_pcseq1, 2)))
+rownames(HT_dir_vert) <- paste0("vertex direction: ", rownames(HT_dir_vert))
+rbind(HT_dir_comp, HT_dir_vert)
+```
+
+The functional representation of this linear is shown below.
+
+```{r}
+#| fig-show: hold
+paris_pcseq4_gg <- data.frame(paris_pcseq4)
+colnames(paris_pcseq4_gg) <- paste0("PC", 1:4)
+ggplot(paris_pcseq4_gg) +
+  geom_vline(xintercept = paris$PROFCAT[[1]]) +
+  geom_vline(xintercept = 1/4, col = "grey55") +
+  geom_line(aes(x = PC1, y = PC1, col = "1", lty = "1"), lwd = .51) +
+  geom_line(aes(x = PC1, y = PC2, col = "2", lty = "2"), lwd = .51) +
+  geom_line(aes(x = PC1, y = PC3, col = "3", lty = "3"), lwd = .51) +
+  geom_line(aes(x = PC1, y = PC4, col = "4", lty = "4"), lwd = .51) +
+  geom_hline(yintercept = 1, col = "black") +
+  geom_boxplot(
+    data = data.frame(PC1 = mun2model$PROFCAT[,1]),
+    mapping = aes(x = PC1, y = 1 + .0625),
+    varwidth = TRUE,
+    size = .5,
+    col = "red",
+    alpha = .25,
+    width = .05) +
+  scale_x_continuous(
+    labels = scales::percent,
+    sec.axis = dup_axis(name= "Boxplot of % in professional category: Upper")) +
+  scale_y_continuous(
+    labels = scales::percent,breaks = seq(0,1,.25)) +
+  scale_color_manual(
+    breaks = c("1", "2", "3", "4"),
+    values = c("Red", "Orange", "Dark Blue", "Yellow"),
+    name = "professional\ncategory",
+    labels = colnames(PROFCAT)) +
+  scale_linetype_manual(
+    breaks = c("1", "2", "3", "4"),
+    values = 1:4,
+    name = "professional\ncategory",
     labels = colnames(PROFCAT)) +
   labs(x = "% in professional category: Upper",
        y = "% in professional category") +
@@ -827,9 +885,7 @@ ggplot(paris_pcseq3_gg) +
 
 # Y-scalar model interpretations
 
-
-In this section we look at a model that explains a transformation of the turnout rate, which we treat as a real variables.
-
+In this section, we look at a model that explains the turnout rate, which we treat as a real variable.
 
 ```{r}
 mun2model$TURNOUT <- 1 - mun2model$VOTE[,6]
@@ -855,19 +911,11 @@ kable(aov, caption = "Analysis of variance table for the X-compositional model",
   save_kable(file = here("out/tables/aov_TURNOUT.tex"))
 ```
 
-
-
-## Interpreting the impact of scalar X
-
-Constant marginal effects.
-
 ## Interpreting the impact of compositional X
 
-Constant semi-elasticities.
+### Semi-elasticities
 
-### Semi-elasticites
-
-In this model the clr transformed coefficients are equal to the semi-elasticity of the shares.
+In this model, the clr transformed coefficients are equal to the semi-elasticity of the shares.
 
 ```{r}
 #| fig-show: hold
@@ -888,28 +936,53 @@ ggplot(clr_confint) +
 ggsave(here("out/figures", "yscalar_elasticity_profcat.pdf"), height = 2, width = 7)
 ```
 
-
 ### Variation Table
 
 The table below illustrates how the dependent variable TURNOUT would react to a change in the composition of the professional categories, where we focus on the municipality of Paris.
 
 ```{r}
+format_VarTab <- function(VT, digits = 4, digitsU = max(digits - 2, 0), digitsP = digits,  digitsPP = digits) {
+  # Print variation tables in a nicer way
+  VT <- t(VT)
+  VT <- as.data.frame(round(VT, digits))
+  
+  v <- "Variation in units"
+  if (!is.null( VT[[v]])) VT[[v]] <- round(VT[[v]], digitsU)
+  
+  v <- "Variation in %"
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsP), " %")
+  
+  v <- "Variation in % points"
+  if (!is.null( VT[[v]])) VT[[v]] <- paste0(round(VT[[v]], digitsPP), " %")
+  t(VT)
+}
+```
+
+```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
+VariationTable4PCparis <- function(Xdir) VariationTable(
+  object = TURNOUT_model,
+  Xvar = "PROFCAT",
+  Xdir = Xdir,
+  inc_size = .1,
+  obs = paris_num,
+  normalize_Xdir = FALSE)
+  
+
+
 paris_varTab <- cbind(
-  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = .1, obs = paris_num),
-  VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = dir_gen, inc_size = .1, obs = paris_num))
+  VariationTable4PCparis("Upper"),
+  VariationTable4PCparis(dir_gen))
 row.names(paris_varTab)[4] <- "Variation in % points"
 paris_varTab[4,] <- paris_varTab[5,] * 100
 paris_varTab <- paris_varTab[-5,]
 
-tab_atr <- VariationTable(TURNOUT_model,Xvar = "PROFCAT", Xdir = "Upper", inc_size = .1, obs = paris_num)
-tab_atr <- attributes(tab_atr)
+tab_atr <- attributes(VariationTable4PCparis("Upper"))
 colnames(paris_varTab) <- c("Direction to vertex", "General direction")
 format_VarTab(paris_varTab, 3,digitsP = 3, digitsPP =  3) |> 
   kable(caption = "Variation of the turnout when changing  PC in different directions", digits = 4, booktabs = TRUE) |> 
   add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2))) 
 ```
-
 
 ```{r}
 #| include: false
@@ -921,13 +994,12 @@ format_VarTab(paris_varTab, 3,digitsP = 2, digitsPP =  2) |>
   save_kable(here("out/tables/VarTab_TURNOUT_XeXu_change.tex"))
 ```
 
-
 ### Variation scenario
 
-We now evaluate how the two scenarios of changes in the socio-professional composition of Paris would impact the vote shares of each candidate.
-We see that all scenarios pass through the observed composition for Paris and lead to a predicted turnout of about $72.9\%$.
-In the hypothetical scenario where Paris has equal population in each professional category the turnout is predicted to drop to about $67\%$.
-
+We now evaluate, for Paris, how changes in the PC composition would impact the vote shares of each candidate.
+In the following, we consider scenarios of changes defined by the linear paths illustrated in the previous section.
+The graphic below shows that all scenarios pass through the observed PC composition for Paris and lead to a predicted turnout of about $72.9\%$.
+In the hypothetical scenario where Paris has shares in each professional category, the turnout is predicted to drop to about $67\%$.
 
 ```{r}
 #| fig-show: hold
@@ -981,8 +1053,8 @@ paris_pred_gg[,variable := str_remove(variable,"PROFCAT.")]
 paris_pred_gg[,variable := factor(variable,colnames(PROFCAT))]
 
 hline <- data.frame(
-  INT = c(paris_pred1[c("0","0","0"), "PRED_TURNOUT"],paris_pred3["101", "PRED_TURNOUT"]),
-  DIR = c("Direction to vertex","General direction", "Origin direction", "Origin direction"),
+  INT = c(paris_pred1[c("0", "0", "0"), "PRED_TURNOUT"],paris_pred3["101", "PRED_TURNOUT"]),
+  DIR = c("Direction to vertex", "General direction",  "Origin direction",  "Origin direction"),
   LAB = c("(Paris)", "(Paris)", "(Paris)", "(origin)"),
   YYY = c(.85),
   JJJ = c(-.5,-.5,-.5, 1.5))
@@ -996,11 +1068,11 @@ ggplot(paris_pred_gg) +
   coord_flip() +
   theme_bw() +
   labs(y = "share in professional category", x = "predicted turnout",
-       col = "Professional\ncategory", lty = "Professional\ncategory") +
+       col = "professional\ncategory", lty = "professional\ncategory") +
   facet_wrap("DIR", ncol = 1, scales = "free_x")
 ```
 
-Focusing on the first two scenarios the graph becomes
+For the first two scenarios, the same graph becomes:
 
 ```{r}
 #| warning: false
@@ -1013,11 +1085,11 @@ ggplot(paris_pred_gg[DIR != "Origin direction",]) +
   theme_bw() +
   coord_flip() +
   labs(y = "share in professional category", x = "predicted turnout",
-       col = "Professional\ncategory", lty = "Professional\ncategory") +
+       col = "professional\ncategory", lty = "professional\ncategory") +
   facet_wrap("DIR", ncol = 1, scales = "free_x")
 ```
 
-An alternative and maybe simpler way to show the same information is to look simultaneously at the changes of the depndents and independent variables as a function of $h$.
+An alternative and maybe more straightforward way to show the same information is to look simultaneously at the changes of the dependent and independent variables as a function of $h$.
 
 ```{r}
 paris_pred_gg2 <- copy(paris_pred_gg[DIR != "Origin direction",])
@@ -1043,17 +1115,15 @@ ggplot(paris_pred_ggX[-30 <= H_SEQ & H_SEQ <= 30]) +
   # scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL), limits = c(.5,.9)) +
   theme_bw() +
   labs(y = "share in PC (bottom) and predicted turnout (top)", x = "value of h",
-       col = "Professional\ncategory", lty = "Professional\ncategory") +
+       col = "professional\ncategory", lty = "professional\ncategory") +
   facet_grid(COMPO ~ DIR, scales = "free")
 
 ggsave(here("out/figures/x_compo_variation_scatter.pdf"), height = 5, width = 7)
 ```
 
-
-
 # Y-compositional model interpretations
 
-Here we look at the case of a Y-compositional model that explains the full composition of votes.
+In this section, we look at the case of a Y-compositional model that explains the entire composition of votes.
 
 ```{r}
 VOTE_model <- lmCoDa(
@@ -1061,7 +1131,6 @@ VOTE_model <- lmCoDa(
   data = mun2model)
 summary(VOTE_model)
 ```
-
 
 ```{r}
 aov <- anova(VOTE_model)
@@ -1074,14 +1143,11 @@ kable(aov, caption = "Analysis of variance table for the y-compositional model",
   save_kable(file = here("out/tables/aov_VOTE.tex"))
 ```
 
-
-
 ## Interpreting the impact of a scalar X
 
+### Semi-elasticities differences
 
-### Semi-elasticities diffrence
-
-The clr coefficients correspond to a difference from a mean elasticity.
+The clr coefficients correspond to a difference from the mean elasticity.
 
 ```{r}
 #| fig-show: hold
@@ -1129,9 +1195,7 @@ ggplot(rbind(clr_confint,clr_confintB)) +
 ggsave(here("out/figures", "clr_b_popdens.pdf"), height = 2.5, width = 7)
 ```
 
-
-
-We can use them to construct differences between the elasticities of two components of the dependent shares with respect to the same variable.
+We can use them to construct differences between the elasticities of two components of the dependent shares with respect to the same explanatory variable.
 
 ```{r}
 #| fig-show: hold
@@ -1171,11 +1235,10 @@ ggplot(rbind(clr_confint,clr_confintB)) +
 ggsave(here("out/figures", "SE_diff_popdens.pdf"), height = 2, width = 7)
 ```
 
-
 ### Variation table
 
-We can use Taylor approximations for to evaluate how the voting behavior reacts to a to a small change in the overall number of registered voters.
-Here we use $\text{log(POP_DENSITY)} + .1$ which means that population density increases by about 10%.
+We can use Taylor approximations to evaluate how the voting behavior reacts to a small change in the number of registered voters.
+Here, we use increment log(POP_DENSITY) by $0.1$, which means that population density increases by about 10%.
 
 ```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
@@ -1185,7 +1248,6 @@ format_VarTab(paris_varTab, 4, 0, 2, 2) |>
   kable(caption = "Increase of the population density by 10%", digits = 4, booktabs = TRUE)
 ```
 
-
 ```{r}
 format_VarTab(paris_varTab, 4, 0, 2, 2) |> 
   kable(caption = "Increase of the population density by 10\\%", digits = 4, booktabs = TRUE,
@@ -1194,19 +1256,17 @@ format_VarTab(paris_varTab, 4, 0, 2, 2) |>
   save_kable(here("out/tables/VarTab_VOTE_logPDENS_change.tex"))
 ```
 
-
 It is easy to verify that the variations in % points and units compensate each other.
 
 ```{r}
-round(rowSums(paris_varTab),10)
+t(t(round(rowSums(paris_varTab),10)))
 ```
-
 
 ### Variation scenarios
 
-In this scenario we suppose that the number of population density changes on a grid that is regular in logs.
-Even for the extreme changes such as a tenfold increase of the population or reduction to one tenth would not lead to a lot of variation.
-When the population of Paris is shrunk one $0.1\%$ of its original size we see considerable differences.
+In this scenario, the population density changes on a grid that is regular in logs.
+Even extreme changes such as a tenfold population increase or reduction to one-tenth would lead to little variation.
+When the population of Paris shrinks to $0.1\%$ of its original size, we see considerable differences.
 
 ```{r}
 #| fig-show: hold
@@ -1228,18 +1288,17 @@ ggplot(paris_size_scenario_gg) +
   geom_line(aes(x = POP_DENSITY, y = value, col = variable, lty = variable)) +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(labels = scales::percent) +
-  labs(y = "vote share", x = "population density", col = "candidate", lty = "candidate") +
+  labs(y = "vote share", x = "population density", col = "candidate\nor block", lty = "candidate\nor block") +
   theme_bw()
 
 ggsave(here("out/figures","y_compo_variation_scatter.pdf"), height = 5, width = 7)
 ```
 
-
-## Interpreting the impact of a X-compositional variable
+## Interpreting the impact of an X-compositional variable
 
 ### Elasticities difference
 
-For X-compositional variables the clr coefficients also correspond to differences in mean elasticities, where these means are computed for each component of $X$ over all dependent shares.
+For X-compositional variables, the clr coefficients also correspond to differences in mean elasticities, where these means are computed for each component of $X$ over all dependent shares.
 
 ```{r}
 #| fig-show: hold
@@ -1289,8 +1348,6 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
 ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
 ```
 
-
-
 ```{r}
 #| fig-show: hold
 #| warning: false
@@ -1328,24 +1385,28 @@ ggplot(clr_confint) +
 ggsave(here("out/figures", "E_diff_profcat.pdf"), height = 3.5, width = 7)
 ```
 
-
-
-
 ### Variation table
 
-Similar to the previous variation Table we  evaluate how the voting behavior reacts to a to a small change in the explanatory composition.
-However, since this variable is multivariate we also have to specify the direction of change.
+Similar to the previous variation table, we evaluate how the voting behavior reacts to a slight change in the explanatory composition.
+However, since this variable is multivariate, we must specify the change direction.
 For a change towards the vertex "Upper" we get the following:
 
 ```{r}
-paris_varTab <- VariationTable(VOTE_model, "PROFCAT", Xdir = "Upper",inc_size = .1, obs = paris_num, Ytotal = mun2model$REGISTERED[paris_num])
+VariationTable4PCparis <- function(Xdir) VariationTable(
+  object = VOTE_model,
+  Xvar = "PROFCAT",
+  Xdir = Xdir,
+  inc_size = .1,
+  obs = paris_num,
+  normalize_Xdir = FALSE)
+
+paris_varTab <- VariationTable4PCparis(Xdir = "Upper")
 tab_atr <- attributes(paris_varTab)
 paris_varTab <- format_VarTab(paris_varTab, 3, 0,digitsP = 2,digitsPP = 2)
 paris_varTab |> 
   kable(caption = "Change of (PC) in direction of the vertex \"Upper\"", digits = 4, booktabs = TRUE) |> 
-    add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2)))  
+    add_footnote(sprintf("h = %s, alpha=%s%%", tab_atr$inc_size, round(100*tab_atr$inc_rate,2)[1]))  
 ```
-
 
 ```{r}
 #| include: false
@@ -1357,24 +1418,14 @@ paris_varTab |>
   save_kable(here("out/tables/VarTab_VOTE_Xe_change.tex"))
 ```
 
-
-For the general direction we get:
+For the general direction, we get the following:
 
 ```{r}
-paris_varTab <- VariationTable(
-  VOTE_model,
-  Xvar =  "PROFCAT",
-  Xdir = dir_gen,
-  inc_size = .1,
-  obs = paris_num,
-  Ytotal = mun2model$REGISTERED[paris_num])
-
+paris_varTab <- VariationTable4PCparis(dir_gen)
 paris_varTab <- format_VarTab(paris_varTab, 3, 0,digitsP = 2,digitsPP = 2)
 paris_varTab |> 
   kable(caption = "Change of PC in a general direction", digits = 4, booktabs = TRUE)
-
 ```
-
 
 ```{r}
 #| include: false
@@ -1385,19 +1436,19 @@ paris_varTab |>
   save_kable(file = here("out/tables/VarTab_VOTE_Xu_change.tex"))
 ```
 
-
 ### Variation scenarios
 
-Turning to the changes induced by the variation of the socio-professional composition in Paris.
-Here we show the changes in the explanatory composition on top of the changes in the predicted shares.
+Let us turn to the changes induced by the variation of the socio-professional composition in Paris.
+Here, we show the changes in the explanatory composition on top of the changes in the predicted shares.
 The graphic below displays the changes as a function of the category "Upper".
 
 ```{r}
 paris_pred1$VOTE <- as(predict(VOTE_model, space = "simplex", newdata = paris_pred1),"matrix")
 paris_pred2$VOTE <- as(predict(VOTE_model, space = "simplex", newdata = paris_pred2),"matrix")
 unmake_pc_vote_names <- c(
-  structure(paste0("(PC) ", colnames(PROFCAT)), names = paste0("PROFCAT.", colnames(PROFCAT))),
-  structure(paste0("(Vote) ", unmake_votenames), names = names(unmake_votenames)))
+  structure(paste0("(Vote) ", unmake_votenames), names = names(unmake_votenames)),
+  structure(paste0("(PC) ", colnames(PROFCAT)), names = paste0("PROFCAT.", colnames(PROFCAT))))
+legend_title <- "candidate or block\n(top six)\n\nprofessional category\n(bottom four)"
 
 paris_pred1_gg <- melt(
   data = data.table(paris_pred1),
@@ -1415,8 +1466,8 @@ paris_pred_gg <- rbind(
 
 paris_pred_gg[,COMPO := as.character(variable)]
 paris_pred_gg[,SAHRE_XY := factor(unmake_pc_vote_names[COMPO], unmake_pc_vote_names)]
-paris_pred_gg[,COMPO := fcase(grepl("^VOTE.",variable), "Changes in Y",
-                              grepl("^PROFCAT.",variable), "Changes in X")]
+paris_pred_gg[,COMPO := fcase(grepl("^VOTE.", variable), "Changes in Y",
+                              grepl("^PROFCAT.", variable), "Changes in X")]
 paris_pred_gg[,COMPO := factor(COMPO, levels = c("Changes in Y", "Changes in X"))]
 
 hline <- data.frame(
@@ -1424,23 +1475,22 @@ hline <- data.frame(
   DIR = c("Direction to vertex","General direction", "General direction"))
 
 pclim <- c(.05, .95)
+
 ggplot(paris_pred_gg) +
   geom_vline(aes(xintercept = INT), data = hline[1:2,]) +
   geom_line(aes(y = value, x = F_SHARE, col =SAHRE_XY, lty = SAHRE_XY)) +
   scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   theme_bw() +
-  labs(y = "predicted share of votes (bottom) or professional category (top)", x = "share of professional category Upper",
-       col = "professional category\n(first four)\n\nvote shares\n(five to ten)",
-       lty = "professional category\n(first four)\n\nvote shares\n(five to ten)") +
+  labs(y = "predicted share of votes (bottom) or professional category (top)",
+       x = "share of professional category Upper",
+       col = legend_title, lty = legend_title) +
   facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
 
-ggsave(here("out/figures", "yx_compo_variation_scatter.pdf"), height = 5.5, width = 7)
+ggsave(here("out/figures", "yx_compo_variation_scatter.pdf"), height = 4.5, width = 7)
 ```
 
-
-We can draw the same graphic as a function of the distance of $h$, which coorresponds in our case to the Aitchison distrance between $X(0)$ and $X(h)$.
-
+We can draw the same graphic as a function of the value of $h$.
 
 ```{r}
 ggplot(paris_pred_gg[,]) +
@@ -1451,15 +1501,14 @@ ggplot(paris_pred_gg[,]) +
   theme_bw() +
   labs(y = "predicted share of votes (bottom) or professional category (top)",
        x = "value of h",
-       col = "professional category\n(first four)\n\nvote shares\n(five to ten)",
-       lty = "professional category\n(first four)\n\nvote shares\n(five to ten)") +
+       col = legend_title, lty = legend_title) +
   facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
 
-ggsave(here("out/figures", "yx_compo_variation_scatter_by_h.pdf"), height = 5.5, width = 7)
+ggsave(here("out/figures", "yx_compo_variation_scatter_by_h.pdf"), height = 4.5, width = 7)
 ```
 
-Focusing on the first three components of each for the two compositions the same graphic can be shown in a matrix of ternary diagrams.
-
+We could also illustrate this scenario in a matrix of ternary diagrams.
+However, in this representation, we are limited to subcompositions of three components.
 
 ```{r}
 #| fig-show: hold
@@ -1469,7 +1518,7 @@ filter1 <- as.numeric(filter1)
 filter1 <- min(max(-filter1), max(filter1))
 filter1 <- intersect(paris_pred1$H_SEQ, seq(-filter1,filter1))
 filter1 <- as.character(seq(-25,25))
-colors1 <- diverging_hcl(length(filter1),palette = "Blue-Red-3", rev = T)
+colors1 <- diverging_hcl(length(filter1),palette = "Blue-Red-3")
 
 
 plot(acomp(paris_pred1$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
@@ -1483,95 +1532,197 @@ par(opar)
 
 ```{r}
 #| include: false
-opar <- par(mfrow = c(1,2), mai = c(0,0.6,0,.6))
+opar <- par(mfrow = c(1,2),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
 plot(acomp(paris_pred1$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
 plot(acomp(paris_pred1$VOTE[filter1,1:3]),  col = colors1, pch = 19)
-save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xe.pdf"), height = 3, width = 7)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xe.pdf"), height = 3, width = 7, bg = "transparent")
 
-opar <- par(mfrow = c(1,2), mai = c(0,0.6,0,.6))
+opar <- par(mfrow = c(1,2),mai = c(0,.6,0,.6), oma = c(0,0,0,0), mar = c(2,3,0,3))
 plot(acomp(paris_pred2$PROFCAT[filter1,1:3]),  col = colors1, pch = 19)
 plot(acomp(paris_pred2$VOTE[filter1,1:3]),  col = colors1, pch = 19)
-save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xu.pdf"), height = 3, width = 7)
+save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xu.pdf"), height = 3, width = 7, bg = "transparent")
 par(opar)
 ```
 
+### Share ratio elasticity tables
 
-### Share ratio tables
+Another way to interpret covariate impacts in XY-compositional models is to consider share ratio elasticities.
+These measure the % change in the ratio of two components of Y relative to the % change in the ratio of two components of X.
+
 
 ```{r}
-ShareRatioTable <- function(
-  object,
-  Xvar,
-  Xdir, 
-  as_matrix = FALSE){
+sre_matrix_plot <- function(sre_tab, psize = 5, bin_centers) {
   
+  sre_tab$Yr <- paste0(as.character(sre_tab$Yj), " / ",as.character(sre_tab$Yl))
+  sre_tab$Xr <- paste0(as.character(sre_tab$Xj), " / ",as.character(sre_tab$Xl))
+  sre_tab$Yr <- factor(sre_tab$Yr, (unique(sre_tab$Yr)))
+  sre_tab$Xr <- factor(sre_tab$Xr, rev(unique(sre_tab$Xr)))
+  Dy <- length(unique(sre_tab$Yj))
+  Dx <- length(unique(sre_tab$Xj))
   
-  stopifnot(is(object, "lmCoDa"),
-            is.character(Xvar) && length(Xvar) == 1,
-            is.numeric(Xdir))
+  Xblocks <- seq(Dx-1) * (Dx - 1) + .5
+  Yblocks <- seq(Dy-1) * (Dy - 1) + .5
+
+  if (missing(bin_centers)) {
+    p <- ggplot(sre_tab) +
+      geom_point(aes(x = Yr, y = Xr, col = SRE, pch = SRE > 0), size = psize) +
+      coord_fixed() +
+      geom_hline(yintercept = Xblocks) +
+      geom_vline(xintercept = Yblocks) +
+      scale_color_continuous_diverging(na.value = "white", rev = TRUE) +
+      scale_shape_manual(breaks = c(T,F), values = c(18,20), labels = c("postive", "negative")) +
+      labs(x = "share ratio of Y", y = "share ratio of X", col = "share ratio\nelasticity", shape = "sign") +
+      theme_bw()  +
+      guides(color = guide_colorbar(order = 1)) +
+      theme(axis.text.x = element_text(angle = 90,hjust = 1, vjust = .5),
+            legend.justification = c(0,1))
+  }
   
-  trSry <- object$trSry
-  Xcomp_names <- names(Filter(function(x) x>=1, trSry$D[-1]))
-  Xcomp_names <- unlist(trSry$NAME_SIMPLEX[Xcomp_names])
-  if (!Xvar %in% Xcomp_names) stop("Xvar musst be one of ", list(Xcomp_names), "!")
-  Xpos <- which(unlist(trSry$NAME_SIMPLEX) == Xvar)
-  if (trSry$D[[Xpos]] != length(Xdir) || any(Xdir <= 0)) stop("Xvar musst be a non-negative vector of length ", trSry$D[Xvar], "!")
-  if (trSry$D[1] == 0) stop("Share ratio tables are only implemented when X and Y are compositional!")
-  
-  
-  B  <- trSry$COEF_CLR[[Xpos]]
-  u  <- Xdir/sum(Xdir)
-  uB <- log(u) %*% B
-  resY <- cbind(
-    expand.grid(Yj  = colnames(B), Yl = colnames(B)),
-    expand.grid(uBj = t(uB)      , uBl = t(uB)))
-  resX <- cbind(
-    expand.grid(Xj  = rownames(B), Xl = rownames(B)),
-    expand.grid(uj  = log(u)     , ul = log(u)))
-  
-  resY <- resY[resY$Yj != resY$Yl,]
-  resX <- resX[resX$Xj != resX$Xl,]
-  resXY <- merge(resY, resX)
-  resXY$SR <- (resXY$uBj - resXY$uBl) / (resXY$uj - resXY$ul)
-  resXY[c("uBj","uBl","uj","ul")] <- NULL
-  if (!as_matrix) return(resXY)
-  
-  
-  Dx <- trSry$D[[Xpos]]
-  Dy <- trSry$D[[1]]
-  resMat <- matrix(resXY$SR,ncol = Dx^2 - Dx, nrow = Dy^2 - Dy)
-  rownames(resMat) <- paste0(resY$Yj, "/", resY$Yl)
-  colnames(resMat) <- paste0(resX$Xj, "/", resX$Xl)
-  return(resMat)
-  
+  if (!missing(bin_centers)) {
+    sre_tab$SREB <- sre_tab$SRE
+    sre_tab$SREB[!is.finite(sre_tab$SREB)] <- NA
+    if (is.null(bin_centers)) {
+      breaks <- max(abs(sre_tab$SREB), na.rm = TRUE)
+      breaks <- seq(from = -breaks, to = breaks, length.out = 12)
+      bin_centers <- breaks[-1] - diff(breaks)/2
+    } 
+    
+    if (is.numeric(bin_centers)) {
+      bin_centers <- sort(unique(bin_centers))
+      breaks <- bin_centers[-1] + diff(bin_centers)/2
+      breaks <- c(bin_centers[1:2] - diff(bin_centers[1:3])/2, breaks)
+      
+      check <- "Bins should contain minimum and maximum SRE values: %s"
+      if (min(breaks) > min(sre_tab$SREB, na.rm = TRUE)) stop(sprintf(check, range(sre_tab$SREB, na.rm = TRUE)))
+      if (max(breaks) < max(sre_tab$SREB, na.rm = TRUE)) stop(sprintf(check, range(sre_tab$SREB, na.rm = TRUE)))
+
+    }
+    
+    sre_tab$SREB <- cut(sre_tab$SREB,breaks,labels = bin_centers, include.lowest = TRUE)
+    nbins <- length(bin_centers)
+    nnegs <- sum(bin_centers < 0)
+    
+    bin_cols   <- diverge_hcl(palette = "Blue-Red 3", n = nbins, rev = TRUE)
+    bin_cols[nnegs + 1] <- "grey"
+    
+    bin_sizes  <- sqrt(abs(seq(-psize, psize, length.out = nbins))) + 1
+    bin_sizes  <- bin_sizes/max(bin_sizes)*psize
+    
+    bin_shapes <- unlist(Map("rep",c(20,18),c(nbins - nnegs,nnegs)))
+    
+    LT <- "share ratio\nelasticity\n± "
+    LT <- paste0(LT,(bin_centers[2] - bin_centers[1])/2)
+    
+    p <- ggplot(sre_tab) +
+      geom_point(aes(x = Yr, y = Xr, col = SREB, pch = SREB, size = SREB)) +
+      coord_fixed() +
+      geom_hline(yintercept = Xblocks) +
+      geom_vline(xintercept = Yblocks) +
+      scale_color_manual(breaks = rev(bin_centers), values = bin_cols, na.value = "white", drop=FALSE) +
+      scale_size_manual( breaks = rev(bin_centers), values = bin_sizes, drop=FALSE) +
+      scale_shape_manual(breaks = rev(bin_centers), values = bin_shapes, drop=FALSE) +
+      labs(x = "share ratio of Y", y = "share ratio of X",
+           col = LT, shape = LT, size = LT) +
+      theme_bw()  +
+      guides(color = guide_legend()) +
+      theme(axis.text.x = element_text(angle = -75,hjust = 1, vjust = .5),
+            legend.justification = c(0,0)) + 
+      scale_x_discrete(position = "top")
+  }
+  return(p)
 }
 ```
 
 
+#### Fixed vertex directions
+
+The four tabs below illustrate the share ratio elasticities for the case where the direction is fixed towards one of the vertices of the PC composition.
+The blank rows in the graphic are because some share ratios do not change for this particular direction.
+
+::: {.panel-tabset}
+
+##### "Upper"
+
 ```{r}
-sr_tab <- ShareRatioTable(VOTE_model,Xvar = "PROFCAT", Xdir = dir_gen)
-sr_tab$Yr <- paste0(as.character(sr_tab$Yj), " / ",as.character(sr_tab$Yl))
-sr_tab$Xr <- paste0(as.character(sr_tab$Xj), " / ",as.character(sr_tab$Xl))
-sr_tab$Yr <- factor(sr_tab$Yr, (unique(sr_tab$Yr)))
-sr_tab$Xr <- factor(sr_tab$Xr, (unique(sr_tab$Xr)))
-
-ggplot(sr_tab) +
-  geom_point(aes(x = Yr, y = Xr, col = SR, pch = SR > 0), size = 5) +
-  coord_fixed() +
-  scale_color_continuous_diverging(rev = T,na.value = "white") +
-  scale_shape_manual(breaks = c(T,F), values = c(20,18)) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90,hjust = 1, vjust = .5)) +
-  labs(x = "Share ratio of Y", y = "Share ratio of X", col = "SRy / SRx", shape = "SRy / SRx > 0")
-
-ggsave(here("out/figures/xy_compo_share_ratio_matrix.pdf"), height = 5)
+#| warning: false
+sre_tab <- ShareRatioElasticities(VOTE_model,Xvar = "PROFCAT", Xdir = "Upper")
+sre_matrix_plot(sre_tab, bin_centers = seq(-175,175,length.out = 11)/1000)
 ```
 
+##### "Workers"
+
+```{r}
+#| warning: false
+sre_tab <- ShareRatioElasticities(VOTE_model,Xvar = "PROFCAT", Xdir = "Workers")
+sre_matrix_plot(sre_tab, bin_centers = seq(-10,10, by = 2)*0.031)
+```
+
+##### "Other"
+
+```{r}
+#| warning: false
+sre_tab <- ShareRatioElasticities(VOTE_model,Xvar = "PROFCAT", Xdir = "Other")
+sre_matrix_plot(sre_tab, bin_centers = seq(-10,10, by = 2)*0.0085)
+```
+
+##### "Retired"
+
+```{r}
+#| warning: false
+sre_tab <- ShareRatioElasticities(VOTE_model,Xvar = "PROFCAT", Xdir = "Retired")
+sre_matrix_plot(sre_tab, bin_centers = seq(-135,135,length.out = 11)/1000)
+```
+
+:::
+
+#### Varying Compensating directions
+
+While the previous charts used the same direction for all share ratio elasticities, we can also change them as a function of the components used in the share ratio of X.
+The compensating direction is particularly interesting for this purpose because we know that the changes in the Y composition are entirely explained by changes in the two compensating components of the X composition.
 
 
-# Acknowledgements {-}
+```{r}
+#| fig-show: hold
+sre_tab <- ShareRatioElasticities(VOTE_model,Xvar = "PROFCAT")
+sre_matrix_plot(sre_tab, bin_centers = seq(-10,10,by = 2)*.0225)
+ggsave(here("out/figures/yx_compo_share_ratio_matrix.pdf"),width = 7, height = 3.5)
+```
 
-The example used to illustrate this work is taken from a Statistical Consulting project class of the Master in Data Science for Social Sciences of The Toulouse School of economics, in cooperation with he Market Research agency BVA.
-The project was a great experience and we want thank again all participants.
-This includes Olivier Hennebelle and Alejandro Lara who advised the project from the side of BVA and our four students, Claire Lebrun, Malo Bert, Kyllian James and Gael Charrier.
+The values of the share-ratio elasticities shown above can be understood as a decomposition of the original clr parameters.
+More precisely, it is possible to show that, within any of the 24 blocks summing over all 15 elasticity values, we obtain $0.5 D_y D_x B^*$, a matrix proportional to the clr parameter values.
 
+```{r}
+B    <- coef(VOTE_model,"clr",separate = TRUE)[["ilr(PROFCAT)"]]
+B_df <- data.table(B,keep.rownames = TRUE)
+B_df <- melt(B_df,id.vars = "rn")
+B_df$Y <- factor(B_df$variable,levels = colnames(B))
+B_df$X <- factor(B_df$rn,levels = rev(rownames(B)))
+setDT(B_df)
+
+setDT(sre_tab)
+B_df2 <- sre_tab[,list(value2 = sum(SRE) / ncol(B) / nrow(B) * 2), by = c("Yl", "Xl")]
+B_df2[B_df, value := i.value, on = c("Yl" = "Y", "Xl" = "X")]
+B_df2
+```
+
+The visual impression blow of parameter matrix $B$, confirms the link to the more detailed share ratio representation above.
+
+```{r}
+#| fig-show: hold
+ggplot(B_df, aes(y = X, x = Y)) + 
+  geom_tile(aes(fill = value)) +
+  geom_text(aes(label = round(value,3), size = abs(value)),fontface = "bold") +
+  scale_size_continuous(range = c(3,4), guide = "none") +
+  scale_x_discrete(position = "top") +
+  scale_fill_continuous_diverging(palette = "Blue-Red 3") +
+  labs(x = "", y = "") +
+  guides(fill = guide_colorbar(barwidth = .5, barheight = 15)) +
+  theme_bw()
+
+ggsave(here("out/figures/clr_B_matrix_image.pdf"))
+```
+
+# Acknowledgements {.unnumbered}
+
+The example used to illustrate this work is taken from a Statistical Consulting project class of the Master in Data Science for Social Sciences of The Toulouse School of Economics, in cooperation with the Market Research agency BVA.
+The project was a great experience, and we want to thank all the participants, namely Olivier Hennebelle and Alejandro Lara, who advised the project from the side of BVA, and our four students, Claire Lebrun, Malo Bert, Kyllian James and Gael Charrier.
