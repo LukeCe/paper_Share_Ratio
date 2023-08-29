@@ -25,8 +25,11 @@ sec___________________________________________________________________________(
 msg <- "Get data from stable url: "
 mun_elec <- "https://www.data.gouv.fr/fr/datasets/r/aae19572-df6d-4e05-ab09-06430ca8acde"
 message(msg, mun_elec)
+message("For documentation see: https://www.data.gouv.fr/fr/datasets/election-presidentielle-des-10-et-24-avril-2022-resultats-definitifs-du-1er-tour")
 suppressWarnings({
-mun_elec <- fread(mun_elec, sep = ";",encoding = 'Latin-1',check.names = FALSE)
+  mun_elec_head <- colnames(fread(mun_elec, sep = ";", encoding = 'Latin-1', header = TRUE,nrows = 0))
+  mun_elec <- fread(mun_elec, sep = ";", encoding = 'Latin-1', header = FALSE)
+  colnames(mun_elec)[seq(length(mun_elec_head))] <- mun_elec_head
 })
 
 
