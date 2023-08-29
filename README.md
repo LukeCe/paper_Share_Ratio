@@ -15,7 +15,7 @@ regression models”*, currently available as a working paper:
 The vignette accompanying the article illustrates the presented
 mathematical tools for a case study of French electoral sociology and
 can be [downloaded directly as
-HTML](notebooks/Modeling%20the%20French%20presidential%20elections%20of%202022%20with%20CoDa%20tools.html).
+HTML](https://htmlpreview.github.io/?https://github.com/LukeCe/paper_Share_Ratio/blob/master/notebooks/Modeling%20the%20French%20presidential%20elections%20of%202022%20with%20CoDa%20tools.html).
 
 ## Notes on reproducibility
 

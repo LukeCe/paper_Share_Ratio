@@ -24,7 +24,7 @@ This repository contains all codes necessary to reproduce the results of our art
 > 23-1456, July 2023., Accessed `r format(Sys.Date(), "%d %b %Y")`.
 > Online at <https://www.tse-fr.eu/sites/default/files/TSE/documents/doc/wp/2023/wp_tse_1456.pdf>
 
-The vignette accompanying the article illustrates the presented mathematical tools for a case study of French electoral sociology and can be [downloaded directly as HTML](notebooks/Modeling%20the%20French%20presidential%20elections%20of%202022%20with%20CoDa%20tools.html).
+The vignette accompanying the article illustrates the presented mathematical tools for a case study of French electoral sociology and can be [downloaded directly as HTML](https://htmlpreview.github.io/?https://github.com/LukeCe/paper_Share_Ratio/blob/master/notebooks/Modeling%20the%20French%20presidential%20elections%20of%202022%20with%20CoDa%20tools.html).
 
 ## Notes on reproducibility
 
