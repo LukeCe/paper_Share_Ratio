@@ -3,7 +3,7 @@ title: "Modeling the French presidential elections of 2022 with CoDa tools"
 author:
   - Lukas Dargel
   - Christine Thomas-Agnan
-date: "2023-08-28"
+date: "2024-03-08"
 date-modified: "last-modified"
 format:
   html:
@@ -19,6 +19,7 @@ format:
 execute:
   cache: true
   fig-show: hold
+  error: true
 ---
 
 ```{r}
@@ -27,8 +28,15 @@ dir.create(here::here("out","figures"),showWarnings = FALSE,recursive = TRUE)
 dir.create(here::here("out","tables"),showWarnings = FALSE,recursive = TRUE)
 ```
 
-This vignette accompanies our article "Share-ratio interpretations of compositional regression models", which is currently [available as a working paper](https://www.tse-fr.eu/publications/share-ratio-interpretations-compositional-regression-models).
-It contains all the code necessary to reproduce the article's results and provides additional illustrations.
+This vignette accompanies our article:
+
+> Dargel, Lukas, and Christine Thomas-Agnan (2024).
+> *Pairwise share ratio interpretations of compositional regression models*.
+> Computational Statistics & Data Analysis, Volume 195, July 2024, 107945
+> Accessed `r format(Sys.Date(), "%d %b %Y")`.
+> Online at <https://doi.org/10.1016/j.csda.2024.107945>
+
+The vignette contains all the code necessary to reproduce the article's results and provides additional illustrations.
 
 ```{r setup}
 #| warning: false
@@ -349,6 +357,19 @@ mun2explore <- data.table(
   REGISTERED = rowSums(VOTE_IMP))
 mun2explore <- cbind(mun2explore, VOTE_IMP, PROFCAT_IMP)
 ```
+
+
+
+## Range of Values
+
+```{r}
+logit <- function(x) log(x/(1-x))
+ggplot(mun2explore[REGISTERED < 300000,],) +
+  geom_point(aes(y = log(1 - `No vote`/REGISTERED), x = logit(1 - `No vote`/REGISTERED))) +
+  theme_bw() +
+  theme()
+```
+
 
 ## Heteroskedasticity
 
@@ -930,11 +951,85 @@ ggplot(clr_confint) +
   geom_point(aes(x=X, y = EST, col = X)) +
   geom_point(aes(x=X, y = `2.5 %`, col = X), pch = "[", stroke = 3) +
   geom_point(aes(x=X, y = `97.5 %`, col = X), pch = "]", stroke = 3) +
-  labs(y = "semi-elasticities values", x = NULL) +
+  labs(y = "semi-elasticities values", x = "professional category") +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "yscalar_elasticity_profcat.pdf"), height = 2, width = 7)
 ```
+
+### Semi-elasticities differences and simplex coeffiecients
+
+We may nonetheless compute the differences in semi-elasticities and also bring the coefficients back into the simplex.
+
+```{r}
+#| warning: false
+clr_confint <- confint(TURNOUT_model, "PROFCAT")
+
+
+# to compute the interval of differences we require 
+# the clr covariance matrix
+varcov_Y <- TURNOUT_model$trSry$VARCOV_CLR$"TURNOUT"
+varcov_X <- TURNOUT_model$trSry$VARCOV_CLR$"ilr(PROFCAT)"
+varcov_b <- varcov_X * as.vector(varcov_Y)
+clr_b    <- coef(TURNOUT_model, space = "clr", split = TRUE)[["ilr(PROFCAT)"]]
+
+varcov_diff <- clr_diff <- rep(0, nrow(varcov_b))
+r <- 1 # reference
+for (i in seq_along(varcov_diff)) {
+  clr_diff[i]    <- clr_b[i] - clr_b[r]
+  varcov_diff[i] <- varcov_b[r,r] + varcov_b[i,i] - 2 * varcov_b[i,r]
+}
+
+# given the sample size we can use normal approximations for to obtain confidence intervals
+diff_confint <- clr_confint
+diff_confint$EST <- clr_diff
+diff_confint$SD <- sqrt(varcov_diff)
+diff_confint[["2.5 %"]]  <- clr_diff + qnorm(0.025) * diff_confint$SD 
+diff_confint[["97.5 %"]] <- clr_diff + qnorm(0.975) * diff_confint$SD # 
+
+# we do not have confidence intervals for simplex valued parameters
+simplex_confint <- clr_confint
+simplex_confint$EST <- exp(clr_b)/sum(exp(clr_b))
+simplex_confint[["SD"]] <- simplex_confint[["2.5 %"]]  <- simplex_confint[["97.5 %"]] <- NA
+
+
+cWay <- "clr / semi-elasticity"
+dWay <- "difference in clr / se"
+sWay <- "simplex"
+threeWays4params <- rbind(
+  cbind(Way = cWay , cen = 0  , clr_confint),
+  cbind(Way = dWay , cen = 0  , diff_confint),
+  cbind(Way = sWay, cen = .25, simplex_confint))
+threeWays4params$X  <- factor(threeWays4params$X, levels = rev(rownames(clr_b)))
+
+
+tail2 <- nrow(threeWays4params) + c(1,2)
+threeWays4params <- rbind(threeWays4params, NA)
+threeWays4params <- rbind(threeWays4params, NA)
+threeWays4params$EST[tail2] <- c(.35,.15)
+threeWays4params$Way[tail2] <- sWay
+threeWays4params$X2 <- threeWays4params$X
+threeWays4params$X2[tail2] <- NA
+threeWays4params$X[tail2] <- "Upper"
+
+ggplot(threeWays4params) +
+  theme_bw() +
+  coord_flip() +
+  geom_hline(aes(yintercept = cen), col = "grey50", lty = "dotted") +
+  geom_segment(aes(x=X, xend=X, y=cen, yend=EST, col = X2)) +
+  geom_point(aes(x=X, y = EST, col = X2)) +
+  geom_point(aes(x=X, y = `2.5 %`, col = X2), pch = "[", stroke = 3) +
+  geom_point(aes(x=X, y = `97.5 %`, col = X2), pch = "]", stroke = 3) +
+  scale_color_discrete_qualitative(na.translate = FALSE) +
+  facet_wrap("Way", scales = "free_x") +
+  labs(y = "value", x = "professional\ncategory") +
+  theme(legend.position = "none")
+
+ggsave(here("out/figures", "yscalar_1clr2diff3simplex_profcat.pdf"), height = 1.65, width = 7)
+```
+
+
+
 
 ### Variation Table
 
@@ -1114,11 +1209,12 @@ ggplot(paris_pred_ggX[-30 <= H_SEQ & H_SEQ <= 30]) +
   scale_linetype_manual(values = 1:4, na.value = 1, , breaks = levels(paris_pred_ggX$variable))  + 
   # scale_x_continuous(labels = scales::percent,sec.axis = dup_axis(name = NULL), limits = c(.5,.9)) +
   theme_bw() +
-  labs(y = "share in PC (bottom) and predicted turnout (top)", x = "value of h",
+  labs(y = "shares of\nprofessional categories (bottom) and predicted turnout (top)",
+       x = "value of h",
        col = "professional\ncategory", lty = "professional\ncategory") +
-  facet_grid(COMPO ~ DIR, scales = "free")
+  facet_grid(COMPO ~ DIR, space = "free_y", scales = "free")
 
-ggsave(here("out/figures/x_compo_variation_scatter.pdf"), height = 5, width = 7)
+ggsave(here("out/figures/x_compo_variation_scatter.pdf"), height = 4, width = 7)
 ```
 
 # Y-compositional model interpretations
@@ -1175,7 +1271,7 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   labs(y = "clr parameter values & confidence intervals\ndistribution of negative mean semi elasticity", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clr_b_popdens_with_details.pdf"), height = 2.5, width = 7)
+ggsave(here("out/figures", "clr_b_popdens_with_details.pdf"), height = 2.25, width = 7)
 ```
 
 ```{r}
@@ -1192,7 +1288,7 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   labs(y = "clr parameter values", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clr_b_popdens.pdf"), height = 2.5, width = 7)
+ggsave(here("out/figures", "clr_b_popdens.pdf"), height = 1.75, width = 7)
 ```
 
 We can use them to construct differences between the elasticities of two components of the dependent shares with respect to the same explanatory variable.
@@ -1213,7 +1309,7 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   geom_point(aes(x=Y, y = DIFF, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  labs(y = "semi-elasticity differences & confidence intervals\n(reference is the share of Macron)", x = NULL) +
+  labs(y = "semi-elasticity differences & confidence intervals\n(in the denominator is Macron)", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "SE_diff_popdens_with_details.pdf"), height = 2, width = 7)
@@ -1232,13 +1328,13 @@ ggplot(rbind(clr_confint,clr_confintB)) +
   labs(y = "semi-elasticity differences", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "SE_diff_popdens.pdf"), height = 2, width = 7)
+ggsave(here("out/figures", "SE_diff_popdens.pdf"), height = 1.75, width = 7)
 ```
 
 ### Variation table
 
 We can use Taylor approximations to evaluate how the voting behavior reacts to a small change in the number of registered voters.
-Here, we use increment log(POP_DENSITY) by $0.1$, which means that population density increases by about 10%.
+Here, we use increment `log(POP_DENSITY)` by $0.1$, which means that population density increases by about 10%.
 
 ```{r}
 paris_num <- which(mun2model$ID_MUN == paris_id)
@@ -1291,7 +1387,7 @@ ggplot(paris_size_scenario_gg) +
   labs(y = "vote share", x = "population density", col = "candidate\nor block", lty = "candidate\nor block") +
   theme_bw()
 
-ggsave(here("out/figures","y_compo_variation_scatter.pdf"), height = 5, width = 7)
+ggsave(here("out/figures","y_compo_variation_scatter.pdf"), height = 2, width = 7)
 ```
 
 ## Interpreting the impact of an X-compositional variable
@@ -1303,10 +1399,13 @@ For X-compositional variables, the clr coefficients also correspond to differenc
 ```{r}
 #| fig-show: hold
 #| warning: false
+
+flevels2 <- c("-Mean elasticity",flevels)
 clr_confint <- confint(VOTE_model, "PROFCAT")
-clr_confint$Y <- factor(clr_confint$Y,levels = flevels)
+clr_confint$X <- factor(clr_confint$X, colnames(PROFCAT))
+clr_confint$Y <- factor(clr_confint$Y, levels = flevels2)
 clr_confint_all <- clr_confint
-clr_confint_all$Y <- factor("-Mean elasticity", flevels)
+clr_confint_all$Y <- factor("-Mean elasticity", flevels2)
 clr_confint_all$SD <- clr_confint_all$EST
 clr_confint_all$EST <- NA
 clr_confint_all$`2.5 %` <- NA
@@ -1340,12 +1439,13 @@ ggplot(rbind(clr_confint,clr_confint_all)) +
   geom_point(aes(x=Y, y = EST, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
+  scale_y_continuous(breaks = seq(-1,1,0.1),minor_breaks = seq(-1,1,0.05)) +
   geom_violin(aes(y = EST, x = Y),data = ME[X!="log(POP_DENSITY)"]) +
-  facet_wrap("X") +
+  facet_grid(~ X, space = "free", scales = "free") +
   labs(y = "parameter values", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
+ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 2, width = 7)
 ```
 
 ```{r}
@@ -1353,6 +1453,7 @@ ggsave(here("out/figures", "clr_B_profcat.pdf"), height = 4, width = 7)
 #| warning: false
 clr_confint <- confint(VOTE_model, "PROFCAT",y_ref = 1)
 clr_confint$Y <- factor(clr_confint$Y,levels = flevels)
+clr_confint$X <- factor(clr_confint$X,levels = colnames(PROFCAT))
 ggplot(clr_confint) +
   theme_bw() +
   coord_flip() +
@@ -1362,12 +1463,11 @@ ggplot(clr_confint) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
   facet_wrap("X") +
-  labs(y = "elasticity differnces & confidence intervals\n(reference is the share of Macron)", x = NULL) +
+  labs(y = "elasticity differences & confidence intervals\n(in the denominator is Macron)", x = NULL) +
   theme(legend.position = "none")
 
 ggsave(here("out/figures", "E_diff_profcat_with_details.pdf"), height = 3.5, width = 7)
 ```
-
 ```{r}
 #| include: false
 ggplot(clr_confint) +
@@ -1378,11 +1478,12 @@ ggplot(clr_confint) +
   geom_point(aes(x=Y, y = DIFF, col = Y)) +
   geom_point(aes(x=Y, y = `2.5 %`, col = Y), pch = "[", stroke = 3) +
   geom_point(aes(x=Y, y = `97.5 %`, col = Y), pch = "]", stroke = 3) +
-  facet_wrap("X") +
-  labs(y = "elasticity differnces", x = NULL) +
+  scale_y_continuous(breaks = seq(-1,1,0.1),minor_breaks = seq(-1,1,0.05)) +
+  facet_grid(~ X, space = "free", scales = "free") +
+  labs(y = "elasticity differences", x = NULL) +
   theme(legend.position = "none")
 
-ggsave(here("out/figures", "E_diff_profcat.pdf"), height = 3.5, width = 7)
+ggsave(here("out/figures", "E_diff_profcat.pdf"), height = 2, width = 7)
 ```
 
 ### Variation table
@@ -1398,7 +1499,8 @@ VariationTable4PCparis <- function(Xdir) VariationTable(
   Xdir = Xdir,
   inc_size = .1,
   obs = paris_num,
-  normalize_Xdir = FALSE)
+  normalize_Xdir = FALSE,
+  Ytotal = mun2model$REGISTERED[paris_num])
 
 paris_varTab <- VariationTable4PCparis(Xdir = "Upper")
 tab_atr <- attributes(paris_varTab)
@@ -1482,7 +1584,7 @@ ggplot(paris_pred_gg) +
   scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   theme_bw() +
-  labs(y = "predicted share of votes (bottom) or professional category (top)",
+  labs(y = "shares of\nprofessional categories (bottom) and predicted votes (top)",
        x = "share of professional category Upper",
        col = legend_title, lty = legend_title) +
   facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
@@ -1499,10 +1601,10 @@ ggplot(paris_pred_gg[,]) +
   scale_y_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   # scale_x_continuous(breaks = seq(1,9, by = 2)/10, labels = scales::percent) +
   theme_bw() +
-  labs(y = "predicted share of votes (bottom) or professional category (top)",
+  labs(y = "shares of\nprofessional categories (bottom) and predicted votes (top)",
        x = "value of h",
        col = legend_title, lty = legend_title) +
-  facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y")
+  facet_grid(rows = vars(COMPO), cols = vars(DIR), shrink = TRUE, scales = "free_y", space = "free_y")
 
 ggsave(here("out/figures", "yx_compo_variation_scatter_by_h.pdf"), height = 4.5, width = 7)
 ```
@@ -1544,6 +1646,114 @@ save_baseplot(pdf, here("out/figures", "yx_compo_variation_ternary_Xu.pdf"), hei
 par(opar)
 ```
 
+
+### Direction of maximal share ratio variation
+
+For each dependent share ratio, the direction of maximal variation is given by the squared norm of the difference vector for two rows of the parameter matrix $B$, where the row indexes correspond to the indexes of the two components that appear in the share ratio.
+With this in mind we can examine how the share ratio react to a change in their respective maximal variation direction.
+
+
+```{r}
+B <- t(coef(VOTE_model,space = "clr", split = TRUE)[["ilr(PROFCAT)"]])
+Dy <- nrow(B)
+
+max_diffs <- expand.grid(yj = rownames(B), yl = rownames(B))
+max_diffs <- max_diffs[as.integer(max_diffs$yj) > as.integer(max_diffs$yl),]
+max_diffs[["diff"]] <-
+  unlist(Map(function(yj, yl) sqrt(crossprod(B[as.integer(yj),] - B[as.integer(yl),])),max_diffs$yj,max_diffs$yl))
+
+MatMaxDiff <- matrix(nrow = Dy, ncol = Dy, dimnames = list(rownames(B),rownames(B)))
+MatMaxDiff[lower.tri(MatMaxDiff)] <- max_diffs$diff
+
+ggplot(max_diffs, aes(y = yl, x = yj)) + 
+  geom_tile(aes(fill = diff)) +
+  geom_text(aes(label = round(diff,3), size = abs(diff)),fontface = "bold") +
+  scale_size_continuous(range = c(3,4), guide = "none") +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(limits=rev) +
+  scale_fill_continuous_sequential("Reds") +
+  labs(x = "", y = "") +
+  guides(fill = guide_colorbar(barwidth = .5, barheight = 10,title =  "value")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 15)) +
+  coord_equal()
+
+ggsave(here("out/figures", "yx_compo_maxdiff_matrix.pdf"), height = 3, width = 4.5)
+```
+
+The above shows that the professional categories is most useful to discriminate Le Pens share from that of the others.
+Let us now look at the variation scenario in the direction of maximal variation for the shares of the "Left" and "Le Pen", which is the strongest opposition in our example.
+Additionally, we look at "No Vote" vs "Le Pen", which is the weakest opposition that invloves "Le Pen" and "Right vs Mélenchon", which is the overall weakest opposition.
+
+```{r}
+Mdiff_VS <- function(den = "Left", num = "Le Pen") {
+  max_diff_dir <- exp(B[num,] - B[den,])
+  max_diff_dir <- max_diff_dir/sum(max_diff_dir)
+  max_diff_scenario <- VariationScenario(VOTE_model,Xvar = "PROFCAT", Xdir = max_diff_dir)  
+  
+  max_diff_scenario$H_SEQ   <- rownames(max_diff_scenario)
+  max_diff_scenario$VOTE    <- max_diff_scenario$Y
+  max_diff_scenario$PROFCAT <- max_diff_scenario$X
+  max_diff_scenario$SR      <- max_diff_scenario$Y[,num] /max_diff_scenario$Y[,den]
+  
+  
+  
+  unmake_names <- paste0(num, " / ", den)
+  unmake_names <- "(SR) Share ratio"
+  unmake_names <- c("SR" = unmake_names, unmake_pc_vote_names)
+  max_diff_scenario_gg <- melt(
+    data = data.table(max_diff_scenario[,c("H_SEQ","VOTE","PROFCAT","SR")]),
+    id.vars = c("H_SEQ"),
+    measure.vars = names(unmake_names))
+
+  max_diff_scenario_gg <- 
+    cbind(max_diff_scenario_gg, "DIR" = paste0(num, " vs. ", den))
+  
+  max_diff_scenario_gg[,COMPO := as.character(variable)]
+  max_diff_scenario_gg[,SAHRE_XY := factor(unmake_names[COMPO], unmake_names)]
+  max_diff_scenario_gg[,COMPO := fcase(
+    variable == "SR", "Share ratio",
+    grepl("^VOTE.", variable), "Changes in Y",
+    grepl("^PROFCAT.", variable), "Changes in X")]
+  max_diff_scenario_gg[,COMPO := factor(COMPO, levels = c("Share ratio", "Changes in Y", "Changes in X"))]
+  max_diff_scenario_gg
+}
+
+max_diff_scenario_gg <- rbind(
+  Mdiff_VS(den = "Left",    num = "Le Pen"),
+  Mdiff_VS(den = "No vote", num = "Le Pen"),
+  Mdiff_VS(num = "Mélenchon", den = "Right"))
+
+legend_title3 <- "share ratio (SR)\n\ncandidate or block (Vote)\n\nprofessional category (PC)"
+ggplot(max_diff_scenario_gg) +
+  geom_vline(aes(xintercept = 0)) +
+  geom_line(aes(y = value, x = as.integer(H_SEQ)/10, col =SAHRE_XY, lty = SAHRE_XY)) +
+  scale_colour_discrete_qualitative() +
+  theme_bw() +
+  labs(y = "X-shares (bottom), Y-shares (middle), Y-share ratio (top)",
+       x = "value of h",
+       col = legend_title3, lty = legend_title3) +
+  facet_grid(rows = vars(COMPO), cols = vars(DIR), scales = "free") +
+  theme(legend.key.width = unit(3, "line"))
+
+ggsave(here("out/figures", "yx_compo_variation_scatter_by_h_maxdiff.pdf"), height = 4.5, width = 7)
+```
+
+
+The direction of changes in X can be easily computed from the parameter matrix:
+
+```{r}
+clrInv2 <- function(x) exp(x)/sum(exp(x))
+uStar <- function(u) round(clrInv2(u/sqrt(sum(u^2))),3)
+
+rbind(data.frame("Y-ratio" =  "Le Pen vs Left", t(uStar(B["Le Pen", ] - B["Left",]))),
+      data.frame("Y-ratio" =  "Le Pen vs No Vote", t(uStar(B["Le Pen", ] - B["No vote",]))),
+      data.frame("Y-ratio" =  "Mélenchon vs Right", t(uStar(B["Mélenchon",] - B["Right", ])))) 
+
+```
+
+
+
 ### Share ratio elasticity tables
 
 Another way to interpret covariate impacts in XY-compositional models is to consider share ratio elasticities.
@@ -1571,7 +1781,7 @@ sre_matrix_plot <- function(sre_tab, psize = 5, bin_centers) {
       geom_vline(xintercept = Yblocks) +
       scale_color_continuous_diverging(na.value = "white", rev = TRUE) +
       scale_shape_manual(breaks = c(T,F), values = c(18,20), labels = c("postive", "negative")) +
-      labs(x = "share ratio of Y", y = "share ratio of X", col = "share ratio\nelasticity", shape = "sign") +
+      labs(x = "share ratios of Y", y = "share ratios of X", col = "share ratio\nelasticity", shape = "sign") +
       theme_bw()  +
       guides(color = guide_colorbar(order = 1)) +
       theme(axis.text.x = element_text(angle = 90,hjust = 1, vjust = .5),
@@ -1621,7 +1831,7 @@ sre_matrix_plot <- function(sre_tab, psize = 5, bin_centers) {
       scale_color_manual(breaks = rev(bin_centers), values = bin_cols, na.value = "white", drop=FALSE) +
       scale_size_manual( breaks = rev(bin_centers), values = bin_sizes, drop=FALSE) +
       scale_shape_manual(breaks = rev(bin_centers), values = bin_shapes, drop=FALSE) +
-      labs(x = "share ratio of Y", y = "share ratio of X",
+      labs(x = "share ratios of Y", y = "share ratios of X",
            col = LT, shape = LT, size = LT) +
       theme_bw()  +
       guides(color = guide_legend()) +
@@ -1678,7 +1888,7 @@ sre_matrix_plot(sre_tab, bin_centers = seq(-135,135,length.out = 11)/1000)
 #### Varying Compensating directions
 
 While the previous charts used the same direction for all share ratio elasticities, we can also change them as a function of the components used in the share ratio of X.
-The compensating direction is particularly interesting for this purpose because we know that the changes in the Y composition are entirely explained by changes in the two compensating components of the X composition.
+The compensating direction is particularly interesting for this purpose because the changes in the Y composition are entirely explained by changes in the two compensating components of the X composition.
 
 
 ```{r}
@@ -1692,7 +1902,7 @@ The values of the share-ratio elasticities shown above can be understood as a de
 More precisely, it is possible to show that, within any of the 24 blocks summing over all 15 elasticity values, we obtain $0.5 D_y D_x B^*$, a matrix proportional to the clr parameter values.
 
 ```{r}
-B    <- coef(VOTE_model,"clr",separate = TRUE)[["ilr(PROFCAT)"]]
+B    <- coef(VOTE_model,"clr",split = TRUE)[["ilr(PROFCAT)"]]
 B_df <- data.table(B,keep.rownames = TRUE)
 B_df <- melt(B_df,id.vars = "rn")
 B_df$Y <- factor(B_df$variable,levels = colnames(B))
@@ -1717,7 +1927,8 @@ ggplot(B_df, aes(y = X, x = Y)) +
   scale_fill_continuous_diverging(palette = "Blue-Red 3") +
   labs(x = "", y = "") +
   guides(fill = guide_colorbar(barwidth = .5, barheight = 15)) +
-  theme_bw()
+  theme_minimal() +
+  coord_equal()
 
 ggsave(here("out/figures/clr_B_matrix_image.pdf"))
 ```

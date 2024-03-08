@@ -1,16 +1,17 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# Pairwise share-ratio interpretations of compositional regression models
+# Pairwise share ratio interpretations of compositional regression models
 
 This repository contains all codes necessary to reproduce the results of
-our article *“Pairwise share-ratio interpretations of compositional
-regression models”*, currently available as a working paper:
+our article *“Pairwise share ratio interpretations of compositional
+regression models”*, available at:
 
-> Dargel, Lukas, and Christine Thomas-Agnan (2023). *Pairwise
-> share-ratio interpretations of compositional regression models*. TSE
-> Working Paper, n. 23-1456, July 2023., Accessed 29 Aug 2023. Online at
-> <https://www.tse-fr.eu/sites/default/files/TSE/documents/doc/wp/2023/wp_tse_1456.pdf>
+> Dargel, Lukas, and Christine Thomas-Agnan (2024). *Pairwise share
+> ratio interpretations of compositional regression models*.
+> Computational Statistics & Data Analysis, Volume 195, July 2024,
+> 107945 Accessed 08 Mar 2024. Online at
+> <https://doi.org/10.1016/j.csda.2024.107945>
 
 The vignette accompanying the article illustrates the presented
 mathematical tools for a case study of French electoral sociology and

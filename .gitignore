@@ -5,5 +5,7 @@
 
 in/data
 out
+*.Rproj
 *_cache
 *_files
+submission
